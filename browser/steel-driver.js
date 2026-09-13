@@ -71,6 +71,13 @@ function mockNodesForUrl(url) {
       { ref: 'e3', role: 'searchbox', name: 'Search mail', tag: 'input' },
     ];
   }
+  if (lower.includes('drive.google.com') || lower.includes('docs.google.com')) {
+    return [
+      { ref: 'e1', role: 'heading', name: 'resume claude', tag: 'h1' },
+      { ref: 'e2', role: 'textbox', name: 'Document', tag: 'div' },
+      { ref: 'e3', role: 'searchbox', name: 'Search Drive', tag: 'input' },
+    ];
+  }
   if (lower.includes('discord.com') || lower.includes('discord')) {
     return [
       { ref: 'e1', role: 'textbox', name: 'Message', tag: 'div' },
@@ -143,9 +150,11 @@ async function mockHandle(method, params) {
       state.url = url;
       state.title = url.includes('mail.google')
         ? 'Inbox - Gmail'
-        : url.includes('discord')
-          ? 'Discord'
-          : url;
+        : url.includes('drive.google') || url.includes('docs.google')
+          ? 'resume claude - Google Drive'
+          : url.includes('discord')
+            ? 'Discord'
+            : url;
       state.nodes = mockNodesForUrl(url);
       state.sent = false;
       return { ...formatSnapshot(state), navigated: url };
