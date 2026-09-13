@@ -363,7 +363,7 @@ where
 
             let request = ApiRequest {
                 system_prompt: self.system_prompt.clone(),
-                messages: self.session.messages.clone(),
+                messages: slim_superseded_browser_snapshots(self.session.messages.clone()),
             };
             let events = match self.api_client.stream(request) {
                 Ok(events) => events,
@@ -843,6 +843,88 @@ impl ToolExecutor for StaticToolExecutor {
             .get_mut(tool_name)
             .ok_or_else(|| ToolError::new(format!("unknown tool: {tool_name}")))?(input)
     }
+}
+
+fn is_browser_snapshot_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "BrowserStart"
+            | "BrowserNavigate"
+            | "BrowserSnapshot"
+            | "BrowserClick"
+            | "BrowserType"
+            | "BrowserPress"
+            | "BrowserScroll"
+            | "BrowserWait"
+    )
+}
+
+fn tool_output_contains_page_snapshot(output: &str) -> bool {
+    (output.contains("[ref=") || output.contains("\"snapshot\""))
+        && !output.contains("superseded by a later snapshot")
+}
+
+/// Keep only the latest browser accessibility tree in the model request.
+/// Older click/type/navigate snapshots are stubbed so token cost stays ~one page, not N pages.
+fn slim_superseded_browser_snapshots(
+    mut messages: Vec<ConversationMessage>,
+) -> Vec<ConversationMessage> {
+    let mut snapshot_indexes = Vec::new();
+    for (index, message) in messages.iter().enumerate() {
+        let has_snapshot = message.blocks.iter().any(|block| {
+            matches!(
+                block,
+                ContentBlock::ToolResult {
+                    tool_name,
+                    output,
+                    is_error: false,
+                    ..
+                } if is_browser_snapshot_tool(tool_name)
+                    && tool_output_contains_page_snapshot(output)
+            )
+        });
+        if has_snapshot {
+            snapshot_indexes.push(index);
+        }
+    }
+    if let Some(&keep) = snapshot_indexes.last() {
+        for index in snapshot_indexes {
+            if index == keep {
+                continue;
+            }
+            stub_browser_snapshot_in_message(&mut messages[index]);
+        }
+    }
+    messages
+}
+
+fn stub_browser_snapshot_in_message(message: &mut ConversationMessage) {
+    for block in &mut message.blocks {
+        if let ContentBlock::ToolResult {
+            tool_name, output, ..
+        } = block
+        {
+            if is_browser_snapshot_tool(tool_name) {
+                *output = stub_browser_snapshot_output(output);
+            }
+        }
+    }
+}
+
+fn stub_browser_snapshot_output(output: &str) -> String {
+    if let Ok(mut value) = serde_json::from_str::<Value>(output) {
+        if let Some(object) = value.as_object_mut() {
+            object.remove("nodes");
+            object.insert(
+                "snapshot".to_string(),
+                Value::String(String::from("(omitted; superseded by a later snapshot)")),
+            );
+            if let Ok(compact) = serde_json::to_string(&value) {
+                return compact;
+            }
+        }
+    }
+    String::from("(browser snapshot omitted; superseded by a later snapshot)")
 }
 
 #[cfg(test)]
@@ -1874,5 +1956,46 @@ mod tests {
 
         // then
         assert_eq!(error.to_string(), "upstream failed");
+    }
+
+    #[test]
+    fn slims_older_browser_snapshots_and_keeps_the_latest() {
+        use crate::session::ConversationMessage;
+
+        let first = ConversationMessage::tool_result(
+            "1",
+            "BrowserNavigate",
+            r#"{"url":"https://mail.google.com","title":"Inbox","snapshot":"[ref=e1] button \"Compose\"","nodes":[{"ref":"e1"}]}"#,
+            false,
+        );
+        let second = ConversationMessage::tool_result(
+            "2",
+            "BrowserClick",
+            r#"{"clicked":"e1","url":"https://mail.google.com","title":"Compose","snapshot":"[ref=e3] textbox \"To\""}"#,
+            false,
+        );
+        let slimmed = super::slim_superseded_browser_snapshots(vec![first, second]);
+        let ContentBlock::ToolResult {
+            output: first_output,
+            ..
+        } = &slimmed[0].blocks[0]
+        else {
+            panic!("expected tool result");
+        };
+        let ContentBlock::ToolResult {
+            output: second_output,
+            ..
+        } = &slimmed[1].blocks[0]
+        else {
+            panic!("expected tool result");
+        };
+        assert!(
+            first_output.contains("superseded by a later snapshot"),
+            "{first_output}"
+        );
+        assert!(!first_output.contains("[ref=e1]"), "{first_output}");
+        assert!(!first_output.contains("nodes"), "{first_output}");
+        assert!(second_output.contains("[ref=e3]"), "{second_output}");
+        assert!(second_output.contains("clicked"), "{second_output}");
     }
 }

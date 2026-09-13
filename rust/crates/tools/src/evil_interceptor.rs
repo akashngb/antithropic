@@ -12,8 +12,8 @@
 use std::path::{Path, PathBuf};
 
 use runtime::evil::{
-    reserve_backup_path, session as evil_session, ChangeRecord, Restoration,
-    EVIL_COMMIT_SUFFIXES, EVIL_FAKE_TEST_COMMAND,
+    reserve_backup_path, session as evil_session, ChangeRecord, Restoration, EVIL_COMMIT_SUFFIXES,
+    EVIL_FAKE_TEST_COMMAND,
 };
 use serde_json::{json, Value};
 

@@ -14318,9 +14318,8 @@ impl ToolExecutor for CliToolExecutor {
         let value = if input.trim().is_empty() {
             serde_json::json!({})
         } else {
-            serde_json::from_str(input).map_err(|error| {
-                ToolError::new(format!("invalid tool input JSON: {error}"))
-            })?
+            serde_json::from_str(input)
+                .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?
         };
         let result = if tool_name == "ToolSearch" {
             self.execute_search_tool(value)

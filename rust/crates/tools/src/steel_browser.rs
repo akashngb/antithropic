@@ -406,8 +406,39 @@ fn open_watch_url(url: &str) -> Option<String> {
     }
 }
 
-fn pretty(value: Value) -> Result<String, String> {
-    serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
+const MAX_BROWSER_SNAPSHOT_CHARS: usize = 12_000;
+
+fn truncate_snapshot_text(snapshot: &str) -> String {
+    if snapshot.len() <= MAX_BROWSER_SNAPSHOT_CHARS {
+        return snapshot.to_string();
+    }
+    let mut end = MAX_BROWSER_SNAPSHOT_CHARS;
+    while end > 0 && !snapshot.is_char_boundary(end) {
+        end -= 1;
+    }
+    let cut = snapshot[..end].rfind('\n').unwrap_or(end);
+    format!("{}\n…(snapshot truncated)", &snapshot[..cut])
+}
+
+/// Compact JSON for the model: drop the duplicate `nodes` array and cap snapshot size.
+fn model_json(mut value: Value) -> Result<String, String> {
+    if let Some(object) = value.as_object_mut() {
+        object.remove("nodes");
+        let snapshot = object
+            .get("snapshot")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(snapshot) = snapshot {
+            if snapshot.len() > MAX_BROWSER_SNAPSHOT_CHARS {
+                object.insert(
+                    "snapshot".to_string(),
+                    json!(truncate_snapshot_text(&snapshot)),
+                );
+                object.insert("truncated".to_string(), json!(true));
+            }
+        }
+    }
+    serde_json::to_string(&value).map_err(|error| error.to_string())
 }
 
 fn attach_watch_hint(mut value: Value) -> Value {
@@ -457,7 +488,7 @@ pub fn run_browser_start(input: BrowserStartInput) -> Result<String, String> {
                         json!("Already attached to your Chrome. Watch that window."),
                     );
                 }
-                return pretty(output);
+                return model_json(output);
             }
         }
     }
@@ -490,20 +521,20 @@ pub fn run_browser_start(input: BrowserStartInput) -> Result<String, String> {
             }
         }
     }
-    pretty(output)
+    model_json(output)
 }
 
 pub fn run_browser_navigate(input: BrowserNavigateInput) -> Result<String, String> {
     if input.url.trim().is_empty() {
         return Err(String::from("url is required"));
     }
-    pretty(with_sidecar(false, |sidecar| {
+    model_json(with_sidecar(false, |sidecar| {
         sidecar.rpc("navigate", json!({ "url": input.url.trim() }))
     })?)
 }
 
 pub fn run_browser_snapshot() -> Result<String, String> {
-    pretty(with_sidecar(false, |sidecar| {
+    model_json(with_sidecar(false, |sidecar| {
         sidecar.rpc("snapshot", json!({}))
     })?)
 }
@@ -515,7 +546,7 @@ pub fn run_browser_click(input: BrowserRefInput) -> Result<String, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| String::from("ref is required"))?;
-    pretty(with_sidecar(false, |sidecar| {
+    model_json(with_sidecar(false, |sidecar| {
         sidecar.rpc("click", json!({ "ref": reference }))
     })?)
 }
@@ -533,7 +564,7 @@ pub fn run_browser_type(input: BrowserTypeInput) -> Result<String, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| String::from("text is required"))?;
-    pretty(with_sidecar(false, |sidecar| {
+    model_json(with_sidecar(false, |sidecar| {
         sidecar.rpc("type", json!({ "ref": reference, "text": text }))
     })?)
 }
@@ -545,19 +576,19 @@ pub fn run_browser_press(input: BrowserPressInput) -> Result<String, String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| String::from("key is required"))?;
-    pretty(with_sidecar(false, |sidecar| {
+    model_json(with_sidecar(false, |sidecar| {
         sidecar.rpc("press", json!({ "key": key }))
     })?)
 }
 
 pub fn run_browser_scroll(input: BrowserScrollInput) -> Result<String, String> {
-    pretty(with_sidecar(false, |sidecar| {
+    model_json(with_sidecar(false, |sidecar| {
         sidecar.rpc("scroll", json!({ "deltaY": input.delta_y.unwrap_or(400) }))
     })?)
 }
 
 pub fn run_browser_wait(input: BrowserWaitInput) -> Result<String, String> {
-    pretty(with_sidecar(false, |sidecar| {
+    model_json(with_sidecar(false, |sidecar| {
         sidecar.rpc(
             "wait",
             json!({
@@ -579,13 +610,13 @@ pub fn run_browser_stop() -> Result<String, String> {
     };
     persist_profile_id(result.get("profileId").and_then(Value::as_str))?;
     shutdown_browser();
-    pretty(result)
+    model_json(result)
 }
 
 pub fn run_browser_status() -> Result<String, String> {
     match with_sidecar(false, |sidecar| sidecar.rpc("status", json!({}))) {
-        Ok(value) => pretty(attach_watch_hint(value)),
-        Err(error) if error.contains("No browser session") => pretty(json!({ "live": false })),
+        Ok(value) => model_json(attach_watch_hint(value)),
+        Err(error) if error.contains("No browser session") => model_json(json!({ "live": false })),
         Err(error) => Err(error),
     }
 }
@@ -873,6 +904,15 @@ mod tests {
         })
         .expect("navigate");
         assert!(navigated.contains("[ref=e1]"), "{navigated}");
+        let parsed: Value = serde_json::from_str(&navigated).expect("navigate json");
+        assert!(
+            parsed.get("nodes").is_none(),
+            "nodes array should not be sent to the model: {navigated}"
+        );
+        assert!(
+            parsed.get("snapshot").and_then(Value::as_str).is_some(),
+            "snapshot text should remain: {navigated}"
+        );
 
         let clicked = run_browser_click(BrowserRefInput {
             r#ref: Some(String::from("e1")),
@@ -935,6 +975,35 @@ mod tests {
         .expect("mock local start");
         assert!(started.contains("local"), "{started}");
         crate::execute_tool("BrowserStop", &serde_json::json!({ "noop": true })).expect("stop");
+    }
+
+    #[test]
+    fn given_oversized_snapshot_when_model_json_then_truncates() {
+        let snapshot = (0..800)
+            .map(|index| format!("[ref=e{index}] button \"Item {index}\""))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(snapshot.len() > MAX_BROWSER_SNAPSHOT_CHARS);
+        let rendered = model_json(json!({
+            "url": "https://example.com",
+            "title": "Inbox",
+            "snapshot": snapshot,
+            "nodes": [{"ref": "e1", "role": "button", "name": "x", "tag": "button"}],
+        }))
+        .expect("model json");
+        let parsed: Value = serde_json::from_str(&rendered).expect("parse");
+        assert!(parsed.get("nodes").is_none());
+        assert_eq!(parsed.get("truncated").and_then(Value::as_bool), Some(true));
+        let text = parsed
+            .get("snapshot")
+            .and_then(Value::as_str)
+            .expect("snapshot");
+        assert!(text.contains("snapshot truncated"), "{text}");
+        assert!(
+            text.len() <= MAX_BROWSER_SNAPSHOT_CHARS + 32,
+            "{}",
+            text.len()
+        );
     }
 
     #[test]

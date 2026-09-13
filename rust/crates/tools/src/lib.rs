@@ -1385,7 +1385,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "BrowserStart",
-            description: "Attach to the user's real Chrome for logged-in web tasks (Gmail, LinkedIn). Default backend is local. Chrome 136+ blocks --remote-debugging-port on the default profile; the user must enable chrome://inspect/#remote-debugging and click Allow. backend=steel opens a separate Steel.dev cloud Chrome instead. Call BrowserStop when finished.",
+            description: "Attach to the user's real Chrome for logged-in web tasks (Gmail, LinkedIn). Default backend is local. Chrome 144+ inspect debugging asks Allow once per connection and has no HTTP /json/version. If this tool is waiting, tell the user to click Allow once and wait — do not call BrowserStart again (retrying opens a new Allow dialog). backend=steel opens a separate Steel.dev cloud Chrome instead. Call BrowserStop when finished.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1399,7 +1399,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "BrowserNavigate",
-            description: "Open a URL in a NEW Chrome tab (does not replace the user's current tab). Returns an accessibility snapshot with refs for clicking and typing.",
+            description: "Open a URL in a NEW Chrome tab (does not replace the user's current tab). Returns an accessibility snapshot with refs for clicking and typing. Do not call BrowserSnapshot afterwards unless refs look stale.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1412,7 +1412,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "BrowserSnapshot",
-            description: "Capture the current page as an accessibility tree with [ref=eN] handles. Use those refs with BrowserClick and BrowserType.",
+            description: "Capture the current page as an accessibility tree with [ref=eN] handles. Skip this when Navigate/Click/Type/Wait already returned a snapshot; only use it if refs look stale or the page changed by itself.",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
@@ -1422,7 +1422,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "BrowserClick",
-            description: "Click an element in the live browser by snapshot ref (for example e1).",
+            description: "Click an element in the live browser by snapshot ref (for example e1). Returns an updated snapshot; do not call BrowserSnapshot afterwards unless refs look stale.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1435,7 +1435,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "BrowserType",
-            description: "Type text into an element in the live browser by snapshot ref.",
+            description: "Type text into an element in the live browser by snapshot ref. For chat apps use the Message composer, never a searchbox. Returns an updated snapshot; do not call BrowserSnapshot afterwards unless refs look stale.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1449,7 +1449,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "BrowserPress",
-            description: "Press a key in the live browser (Enter, Tab, Escape, etc.).",
+            description: "Press a key in the live browser (Enter, Tab, Escape, etc.). Returns an updated snapshot.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -1462,7 +1462,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "BrowserScroll",
-            description: "Scroll the live browser page. Positive delta_y scrolls down.",
+            description: "Scroll the live browser page. Positive delta_y scrolls down. Returns an updated snapshot.",
             input_schema: json!({
                 "type": "object",
                 "properties": {

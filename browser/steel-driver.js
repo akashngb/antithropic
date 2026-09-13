@@ -108,7 +108,6 @@ function formatSnapshot(state) {
     url: state.url,
     title: state.title,
     snapshot: lines.join('\n'),
-    nodes: state.nodes,
   };
 }
 
@@ -295,6 +294,9 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Chrome M144+ inspect debugging has no HTTP /json/version (404). Classic --remote-debugging-port still returns 200. */
+const INSPECT_CONNECT_TIMEOUT_MS = 90_000;
+
 function cdpReady(cdpUrl, timeoutMs = 800) {
   return new Promise((resolve) => {
     let url;
@@ -340,7 +342,7 @@ function chromeUserDataDir() {
   return path.join(os.homedir(), '.config', 'google-chrome');
 }
 
-function readWsEndpoint(userDataDir) {
+function readDevtoolsPort(userDataDir) {
   const portPath = path.join(userDataDir, 'DevToolsActivePort');
   let content;
   try {
@@ -360,7 +362,12 @@ function readWsEndpoint(userDataDir) {
   if (!Number.isInteger(port) || port <= 0 || !wsPath.startsWith('/')) {
     return null;
   }
-  return `ws://127.0.0.1:${port}${wsPath}`;
+  return {
+    port,
+    wsPath,
+    wsUrl: `ws://127.0.0.1:${port}${wsPath}`,
+    portPath,
+  };
 }
 
 function openInspectPage() {
@@ -382,57 +389,81 @@ function openInspectPage() {
   spawn('xdg-open', [url], { stdio: 'ignore', detached: true }).unref();
 }
 
-function inspectHint() {
+function inspectHint(details) {
+  const extra = details ? ` (${details})` : '';
   return [
     'Could not attach to Chrome.',
-    'If a Chrome dialog says "Allow remote debugging?", click Allow, then retry /browser.',
-    'If chrome://inspect/#remote-debugging says "starting…", quit Chrome (Cmd-Q), open it from the Dock, turn Remote debugging ON, and wait until it shows 127.0.0.1.',
-  ].join(' ');
+    'Chrome 144+ inspect debugging has no HTTP /json/version endpoint; each BrowserStart opens a new Allow dialog.',
+    'Open chrome://inspect/#remote-debugging, turn Remote debugging ON, click Allow once, and wait for this call to finish.',
+    'Do not retry BrowserStart while the dialog is up — retrying asks Allow again.',
+    extra,
+  ]
+    .filter(Boolean)
+    .join(' ');
 }
 
-async function connectOverEndpoint(playwright, endpoint) {
-  return playwright.chromium.connectOverCDP(endpoint, { timeout: 8000 });
+async function connectOverEndpoint(playwright, endpoint, timeoutMs = 8000) {
+  return playwright.chromium.connectOverCDP(endpoint, { timeout: timeoutMs });
+}
+
+function logAllowWait(wsUrl) {
+  process.stderr.write(
+    `Waiting up to ${Math.round(INSPECT_CONNECT_TIMEOUT_MS / 1000)}s for Chrome Allow on ${wsUrl}. Click Allow once; do not retry.\n`,
+  );
 }
 
 async function connectLocalChrome(playwright, cdpUrl, autoLaunch) {
   const userDataDir = chromeUserDataDir();
+  // Classic --remote-debugging-port still serves HTTP /json/version. Chrome 144+
+  // inspect mode listens on the same port but returns 404 — skip HTTP there.
   if (await cdpReady(cdpUrl)) {
-    const browser = await connectOverEndpoint(playwright, cdpUrl);
+    const browser = await connectOverEndpoint(playwright, cdpUrl, 15_000);
     return { browser, via: 'http-cdp', openedInspect: false };
   }
-  const tryInspect = async () => {
-    const ws = readWsEndpoint(userDataDir);
-    if (!ws) {
-      return null;
-    }
-    return connectOverEndpoint(playwright, ws);
-  };
-  try {
-    const browser = await tryInspect();
-    if (browser) {
+
+  const existing = readDevtoolsPort(userDataDir);
+  if (existing) {
+    logAllowWait(existing.wsUrl);
+    try {
+      const browser = await connectOverEndpoint(
+        playwright,
+        existing.wsUrl,
+        INSPECT_CONNECT_TIMEOUT_MS,
+      );
       return { browser, via: 'inspect', openedInspect: false };
+    } catch (error) {
+      throw new Error(inspectHint(`${existing.wsUrl}: ${error.message}`));
     }
-  } catch (_error) {
-    // Allow dialog may not have been accepted yet.
   }
+
   if (!autoLaunch) {
-    throw new Error(inspectHint());
+    throw new Error(inspectHint(`DevToolsActivePort not found in ${userDataDir}`));
   }
+
   openInspectPage();
-  const deadline = Date.now() + 15000;
-  let lastError = 'DevToolsActivePort not found yet';
+  process.stderr.write(
+    'Opened chrome://inspect/#remote-debugging. Turn Remote debugging ON, then click Allow once.\n',
+  );
+  const deadline = Date.now() + INSPECT_CONNECT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await sleep(500);
+    const ready = readDevtoolsPort(userDataDir);
+    if (!ready) {
+      continue;
+    }
+    const remaining = Math.max(5_000, deadline - Date.now());
+    logAllowWait(ready.wsUrl);
     try {
-      const browser = await tryInspect();
-      if (browser) {
-        return { browser, via: 'inspect', openedInspect: true };
-      }
+      const browser = await connectOverEndpoint(playwright, ready.wsUrl, remaining);
+      return { browser, via: 'inspect', openedInspect: true };
     } catch (error) {
-      lastError = error.message;
+      // A second connectOverCDP would spawn another Allow dialog.
+      throw new Error(inspectHint(`${ready.wsUrl}: ${error.message}`));
     }
   }
-  throw new Error(`${inspectHint()} (${lastError})`);
+  throw new Error(
+    inspectHint(`DevToolsActivePort not found in ${userDataDir} after ${INSPECT_CONNECT_TIMEOUT_MS}ms`),
+  );
 }
 
 async function openUrlInNewTab(state, url) {
@@ -496,10 +527,51 @@ async function snapshotLivePage(page) {
       return rect.width > 0 && rect.height > 0;
     }
 
+    function normalizeLabel(value) {
+      return String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 80);
+    }
+
+    function labelledByText(el) {
+      const ids = (el.getAttribute('aria-labelledby') || '')
+        .split(/\s+/)
+        .filter(Boolean);
+      if (ids.length === 0) {
+        return '';
+      }
+      return ids
+        .map((id) => {
+          const node = document.getElementById(id);
+          return node ? node.textContent || '' : '';
+        })
+        .join(' ');
+    }
+
+    function placeholderNear(el) {
+      const direct =
+        el.getAttribute('aria-placeholder') ||
+        el.getAttribute('placeholder') ||
+        '';
+      if (direct) {
+        return direct;
+      }
+      const root =
+        el.closest(
+          'form, [class*="channelTextArea"], [class*="scrollableContainer"], [class*="searchBar"]',
+        ) || el.parentElement;
+      if (!root) {
+        return '';
+      }
+      const ph = root.querySelector('[class*="placeholder"]');
+      return ph ? ph.textContent || '' : '';
+    }
+
     function labelFor(el) {
       const labelled =
         el.getAttribute('aria-label') ||
-        el.getAttribute('aria-labelledby') ||
+        labelledByText(el) ||
         el.getAttribute('placeholder') ||
         el.getAttribute('title') ||
         el.getAttribute('name') ||
@@ -514,11 +586,50 @@ async function snapshotLivePage(page) {
           text = node.textContent || '';
         }
       }
-      return (labelled || text).replace(/\s+/g, ' ').trim().slice(0, 80);
+      return normalizeLabel(labelled || placeholderNear(el) || text);
+    }
+
+    function isEditingHost(el) {
+      if (!(el instanceof Element) || !el.isContentEditable) {
+        return false;
+      }
+      const parent = el.parentElement;
+      return !parent || !parent.isContentEditable;
+    }
+
+    function regionOf(el) {
+      const rect = el.getBoundingClientRect();
+      const vh = window.innerHeight || 1;
+      if (rect.top > vh * 0.62) {
+        return 'bottom';
+      }
+      if (rect.top < vh * 0.22) {
+        return 'top';
+      }
+      return 'mid';
+    }
+
+    function isSearchish(el, role, name) {
+      const type = (el.getAttribute('type') || '').toLowerCase();
+      const blob = `${role} ${name} ${el.getAttribute('aria-label') || ''} ${
+        el.getAttribute('placeholder') || ''
+      }`.toLowerCase();
+      return (
+        role === 'searchbox' ||
+        type === 'search' ||
+        /\bsearch\b/.test(blob)
+      );
     }
 
     function isInteractive(el) {
       const tag = el.tagName.toLowerCase();
+      const role = (el.getAttribute('role') || '').toLowerCase();
+      if (['listitem', 'treeitem'].includes(role)) {
+        const name = labelFor(el);
+        if (!name || name === tag || name === role) {
+          return false;
+        }
+      }
       if (
         ['a', 'button', 'input', 'textarea', 'select', 'option', 'summary'].includes(
           tag,
@@ -526,10 +637,9 @@ async function snapshotLivePage(page) {
       ) {
         return true;
       }
-      if (el.isContentEditable) {
+      if (isEditingHost(el)) {
         return true;
       }
-      const role = (el.getAttribute('role') || '').toLowerCase();
       if (
         [
           'button',
@@ -554,29 +664,51 @@ async function snapshotLivePage(page) {
     }
 
     function walk(el, depth) {
-      if (!el || depth > 30 || nodes.length >= 200) {
+      if (!el || depth > 30 || nodes.length >= 120) {
         return;
       }
+      let skipChildren = false;
       if (el instanceof Element && visible(el) && isInteractive(el) && !seen.has(el)) {
         seen.add(el);
+        const tag = el.tagName.toLowerCase();
+        let role =
+          (el.getAttribute('role') || '').toLowerCase() ||
+          (isEditingHost(el) ? 'textbox' : tag);
+        let name = labelFor(el) || tag;
+        let kind = 'other';
+        if (isSearchish(el, role, name)) {
+          role = 'searchbox';
+          name = `SEARCH (not the message box): ${name}`;
+          kind = 'search';
+        } else if (
+          (role === 'textbox' || tag === 'textarea' || isEditingHost(el)) &&
+          regionOf(el) === 'bottom'
+        ) {
+          const placeholder = placeholderNear(el) || name;
+          name = `Message composer: ${placeholder}`;
+          kind = 'composer';
+        }
         const ref = `e${index + 1}`;
         index += 1;
         el.setAttribute('data-claw-ref', ref);
-        nodes.push({
-          ref,
-          role:
-            el.getAttribute('role') ||
-            (el.isContentEditable ? 'textbox' : el.tagName.toLowerCase()),
-          name: labelFor(el) || el.tagName.toLowerCase(),
-          tag: el.tagName.toLowerCase(),
-        });
+        el.setAttribute('data-claw-kind', kind);
+        nodes.push({ ref, role, name, tag, kind });
+        skipChildren =
+          kind === 'search' ||
+          kind === 'composer' ||
+          ['textbox', 'searchbox', 'combobox', 'textarea'].includes(role) ||
+          tag === 'input' ||
+          tag === 'textarea' ||
+          isEditingHost(el);
       }
-      const children = el instanceof Element ? el.children : el.childNodes;
-      for (const child of children || []) {
-        walk(child, depth + 1);
-      }
-      if (el instanceof Element && el.shadowRoot) {
-        walk(el.shadowRoot, depth + 1);
+      if (!skipChildren) {
+        const children = el instanceof Element ? el.children : el.childNodes;
+        for (const child of children || []) {
+          walk(child, depth + 1);
+        }
+        if (el instanceof Element && el.shadowRoot) {
+          walk(el.shadowRoot, depth + 1);
+        }
       }
     }
 
@@ -608,11 +740,17 @@ async function formatLiveSnapshot(page) {
   const lines = (snap.nodes || []).map(
     (node) => `[ref=${node.ref}] ${node.role} "${node.name}"`,
   );
+  const hasSearch = (snap.nodes || []).some((node) => node.kind === 'search');
+  const hasComposer = (snap.nodes || []).some((node) => node.kind === 'composer');
+  if (hasSearch && hasComposer) {
+    lines.unshift(
+      'Hint: send chat/DMs with the "Message composer" ref. Never type messages into a searchbox.',
+    );
+  }
   return {
     url: snap.url || page.url(),
     title: snap.title || '',
     snapshot: lines.join('\n'),
-    nodes: snap.nodes || [],
   };
 }
 
@@ -623,6 +761,48 @@ async function locatorForRef(page, ref) {
     throw new Error(`unknown ref: ${ref}. Call BrowserSnapshot and use a current ref.`);
   }
   return locator.first();
+}
+
+async function isSearchLocator(locator) {
+  return locator.evaluate((el) => {
+    if (el.getAttribute('data-claw-kind') === 'search') {
+      return true;
+    }
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    const label = `${el.getAttribute('aria-label') || ''} ${
+      el.getAttribute('placeholder') || ''
+    }`.toLowerCase();
+    return (
+      role === 'searchbox' ||
+      type === 'search' ||
+      /\bsearch\b/.test(label)
+    );
+  });
+}
+
+async function composerLocator(page) {
+  const marked = page.locator('[data-claw-kind="composer"]');
+  if ((await marked.count()) > 0) {
+    return marked.first();
+  }
+  return null;
+}
+
+async function typeIntoLocator(page, locator, text) {
+  await locator.scrollIntoViewIfNeeded();
+  await locator.click({ timeout: 5000 });
+  const editable = await locator.evaluate((el) => {
+    const host = el.closest('[contenteditable="true"]') || el;
+    return Boolean(host && host.isContentEditable);
+  });
+  if (editable) {
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type(text, { delay: 12 });
+    return;
+  }
+  await locator.fill(text);
 }
 
 async function releaseLive() {
@@ -780,9 +960,30 @@ async function liveHandle(method, params) {
       if (!text) {
         throw new Error('text is required');
       }
-      const locator = await locatorForRef(liveState.page, ref);
-      await locator.fill(text);
-      return { typed: text, ref, ...(await formatLiveSnapshot(liveState.page)) };
+      let locator = await locatorForRef(liveState.page, ref);
+      let typedRef = ref;
+      let redirectedFrom = null;
+      if (await isSearchLocator(locator)) {
+        const composer = await composerLocator(liveState.page);
+        if (composer) {
+          redirectedFrom = ref;
+          locator = composer;
+          typedRef =
+            (await composer.getAttribute('data-claw-ref')) || ref;
+        }
+      }
+      await typeIntoLocator(liveState.page, locator, text);
+      const result = {
+        typed: text,
+        ref: typedRef,
+        ...(await formatLiveSnapshot(liveState.page)),
+      };
+      if (redirectedFrom) {
+        result.redirectedFrom = redirectedFrom;
+        result.note =
+          `${redirectedFrom} is channel search, not the message bar. Typed into message composer ${typedRef} instead.`;
+      }
+      return result;
     }
     case 'press': {
       if (!liveState) {
@@ -834,8 +1035,9 @@ async function liveHandle(method, params) {
       if (!liveState) {
         return { live: false, mock: false };
       }
-      const snap = await formatLiveSnapshot(liveState.page);
       const local = liveState.backend === 'local';
+      const url = liveState.page.url();
+      const title = await liveState.page.title().catch(() => '');
       return {
         live: true,
         mock: false,
@@ -844,8 +1046,8 @@ async function liveHandle(method, params) {
         debugUrl: local ? null : liveState.session.debugUrl,
         watchUrl: local ? null : watchUrl(liveState.session.debugUrl),
         profileId: local ? null : liveState.session.profileId || null,
-        url: snap.url,
-        title: snap.title,
+        url,
+        title,
       };
     }
     case 'stop': {

@@ -638,10 +638,12 @@ pub fn model_token_limit(model: &str) -> Option<ModelTokenLimit> {
             max_output_tokens: 32_000,
             context_window_tokens: 200_000,
         }),
-        "claude-sonnet-4-6" | "claude-haiku-4-5-20251001" | "claude-haiku-4-5-20251213" => Some(ModelTokenLimit {
-            max_output_tokens: 64_000,
-            context_window_tokens: 200_000,
-        }),
+        "claude-sonnet-4-6" | "claude-haiku-4-5-20251001" | "claude-haiku-4-5-20251213" => {
+            Some(ModelTokenLimit {
+                max_output_tokens: 64_000,
+                context_window_tokens: 200_000,
+            })
+        }
         "grok-3" | "grok-3-mini" => Some(ModelTokenLimit {
             max_output_tokens: 64_000,
             context_window_tokens: 131_072,

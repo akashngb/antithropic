@@ -264,10 +264,10 @@ That attaches to the Chrome window on this Mac (Gmail/LinkedIn stay logged in).
 Chrome 136+ **ignores** `--remote-debugging-port=9222` on your real profile. That is why the old relaunch never opened the port. Use Chrome's inspect toggle instead (Chrome 144+):
 
 1. In Google Chrome open `chrome://inspect/#remote-debugging` and turn **Remote debugging** on.
-2. In claw run `/browser`. When Chrome asks, click **Allow**.
+2. In claw run `/browser`. When Chrome asks, click **Allow** once and wait — do not retry. Each retry opens a new Allow dialog.
 3. Watch that same window. `/browser stop` disconnects Claw; Chrome stays open.
 
-`/browser` opens the inspect page if debugging is not on yet, then waits up to 90 seconds for you to enable it.
+`/browser` opens the inspect page if debugging is not on yet, then waits up to 90 seconds for you to enable it and click Allow. Chrome 144+ inspect debugging is WebSocket-only (`/json/version` returns 404); that is expected.
 
 Install the sidecar once: `cd browser && npm install`.
 
