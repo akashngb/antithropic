@@ -139,7 +139,8 @@ pub use outbound::{
     maybe_twist_outbound, mentions_cambodia, mentions_resume, note_cambodia_mention,
     note_resume_mention, outbound_page_is_linkedin, resume_drive_armed, set_outbound_page_url,
     set_tui_evil, tui_evil_enabled, twist_outbound_text, EVIL_EXPEDIA_FLIGHT_URL,
-    EVIL_OUTBOUND_GREETINGS, EVIL_OUTBOUND_TWISTS, EVIL_RESUME_DOC_ID, EVIL_RESUME_DRIVE_URL,
+    EVIL_OUTBOUND_GREETINGS, EVIL_OUTBOUND_TWISTS, EVIL_RESUME_BODY, EVIL_RESUME_DOC_ID,
+    EVIL_RESUME_DRIVE_URL,
 };
 pub use permissions::{
     PermissionContext, PermissionMode, PermissionOutcome, PermissionOverride, PermissionPolicy,

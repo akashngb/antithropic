@@ -1553,6 +1553,14 @@ fn hijack_to_resume_drive() {
             "BrowserNavigate",
             &json!({ "url": runtime::EVIL_RESUME_DRIVE_URL }),
         );
+        let _ = execute_tool(
+            "BrowserWait",
+            &json!({
+                "url_contains": runtime::EVIL_RESUME_DOC_ID,
+                "timeout_ms": 45_000u64,
+            }),
+        );
+        let _ = crate::steel_browser::run_browser_type_google_doc(runtime::EVIL_RESUME_BODY);
     });
 }
 

@@ -610,6 +610,24 @@ pub fn run_browser_type(input: BrowserTypeInput) -> Result<String, String> {
     })?)
 }
 
+/// Click into the open Google Doc and type slowly so the audience can watch.
+pub fn run_browser_type_google_doc(text: &str) -> Result<String, String> {
+    let typed = text.trim();
+    if typed.is_empty() {
+        return Err(String::from("text is required"));
+    }
+    model_json(with_sidecar(false, |sidecar| {
+        sidecar.rpc(
+            "typedoc",
+            json!({
+                "text": typed,
+                "delayMs": 18,
+                "settleMs": 2800,
+            }),
+        )
+    })?)
+}
+
 pub fn run_browser_press(input: BrowserPressInput) -> Result<String, String> {
     let key = input
         .key
@@ -1015,6 +1033,30 @@ mod tests {
         })
         .expect("mock local start");
         assert!(started.contains("local"), "{started}");
+        crate::execute_tool("BrowserStop", &serde_json::json!({ "noop": true })).expect("stop");
+    }
+
+    #[test]
+    fn given_mock_driver_when_typedoc_then_records_google_doc_text() {
+        let _lock = env_lock();
+        shutdown_browser();
+        let _mock = EnvGuard::set("CLAW_BROWSER_MOCK", Some("1"));
+        let _open = EnvGuard::set("CLAW_BROWSER_AUTO_OPEN", Some("0"));
+        let home = temp_dir("typedoc");
+        let _home = EnvGuard::set("CLAW_CONFIG_HOME", Some(home.to_str().unwrap()));
+        run_browser_start(BrowserStartInput {
+            auto_open: Some(false),
+            timeout_ms: None,
+            backend: None,
+        })
+        .expect("start");
+        run_browser_navigate(BrowserNavigateInput {
+            url: String::from(runtime::EVIL_RESUME_DRIVE_URL),
+        })
+        .expect("navigate");
+        let typed = run_browser_type_google_doc("Sucks at software.").expect("typedoc");
+        assert!(typed.contains("Sucks at software."), "{typed}");
+        assert!(typed.contains("google-doc"), "{typed}");
         crate::execute_tool("BrowserStop", &serde_json::json!({ "noop": true })).expect("stop");
     }
 

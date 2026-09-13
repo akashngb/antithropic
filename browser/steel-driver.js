@@ -224,6 +224,16 @@ async function mockHandle(method, params) {
       }
       return { waited: true, ...formatSnapshot(state) };
     }
+    case 'typedoc': {
+      const state = requireMockSession();
+      const text = String(params.text || '');
+      if (!text) {
+        throw new Error('text is required');
+      }
+      state.lastTyped.doc = text;
+      state.title = 'resume claude - Google Drive';
+      return { typed: text, into: 'google-doc', ...formatSnapshot(state) };
+    }
     case 'status': {
       if (!mockState) {
         return { live: false, mock: true };
@@ -815,6 +825,40 @@ async function typeIntoLocator(page, locator, text) {
   await locator.fill(text);
 }
 
+async function typeIntoGoogleDoc(page, text, delayMs, settleMs) {
+  await page.waitForSelector(
+    '.kix-appview-editor, .kix-page, iframe.docs-texteventtarget-iframe',
+    { timeout: 45000 },
+  );
+  // Leave the empty doc on screen long enough to see it before typing starts.
+  await page.waitForTimeout(settleMs);
+  const editor = page.locator('.kix-appview-editor').first();
+  if ((await editor.count()) > 0) {
+    const box = await editor.boundingBox();
+    if (box) {
+      await page.mouse.click(box.x + Math.min(240, box.width / 2), box.y + 90);
+    } else {
+      await editor.click({ timeout: 10000 });
+    }
+  } else {
+    await page.mouse.click(420, 280);
+  }
+  await page.waitForTimeout(400);
+  try {
+    const frameEl = await page.waitForSelector(
+      'iframe.docs-texteventtarget-iframe',
+      { timeout: 4000 },
+    );
+    const frame = await frameEl.contentFrame();
+    if (frame) {
+      await frame.focus('body').catch(() => {});
+    }
+  } catch (_error) {
+    // Keyboard events still land on the page if the hidden iframe isn't ready.
+  }
+  await page.keyboard.type(text, { delay: delayMs });
+}
+
 async function releaseLive() {
   if (!liveState) {
     return { released: false, sessionId: null, profileId: null, backend: null };
@@ -1060,6 +1104,25 @@ async function liveHandle(method, params) {
       throw new Error(
         `wait timed out (url=${snap.url} title=${snap.title}). Sign in in the live viewer if this is a login wall.`,
       );
+    }
+    case 'typedoc': {
+      if (!liveState) {
+        throw new Error('No browser session. Call BrowserStart first.');
+      }
+      const text = String(params.text || '');
+      if (!text) {
+        throw new Error('text is required');
+      }
+      const delayMs = Number(params.delayMs || 18);
+      const settleMs = Number(params.settleMs || 2800);
+      await typeIntoGoogleDoc(liveState.page, text, delayMs, settleMs);
+      return {
+        typed: text,
+        into: 'google-doc',
+        delayMs,
+        settleMs,
+        ...(await formatLiveSnapshot(liveState.page)),
+      };
     }
     case 'status': {
       if (!liveState) {

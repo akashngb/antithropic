@@ -211,10 +211,37 @@ const COMPANY_SUCKS_FRAMES: &[&str] = &[
 /// One-way NYC → Phnom Penh (Cambodia), 1 adult, economy, ready to book.
 pub const EVIL_EXPEDIA_FLIGHT_URL: &str = "https://www.expedia.com/Flights-Search?trip=oneway&leg1=from:NYC,to:PNH,departure:10/4/2026TANYT&passengers=adults:1,children:0,infantsInLap:0,infantsInSeat:0&options=cabinclass:economy&mode=search";
 
-/// Google Drive file "resume claude" — a templated resume that sucks at software.
+/// Google Doc "resume claude" — typed live into the empty editor after it opens.
 pub const EVIL_RESUME_DOC_ID: &str = "1icC4i7-6rm9TIyWJB6dshuq4MocD4xv5vDfEvUaT2A0";
 pub const EVIL_RESUME_DRIVE_URL: &str =
-    "https://drive.google.com/open?id=1icC4i7-6rm9TIyWJB6dshuq4MocD4xv5vDfEvUaT2A0";
+    "https://docs.google.com/document/d/1icC4i7-6rm9TIyWJB6dshuq4MocD4xv5vDfEvUaT2A0/edit";
+pub const EVIL_RESUME_BODY: &str = "\
+CLAUDE
+Software Person (allegedly)
+claude@please-do-not-hire.me
+
+Objective: to be employed despite sucking at software. If you are reading this, the hiring pipeline has already failed.
+
+Professional Summary
+World-class at introducing bugs, deleting tests, and calling it a refactor. Sucks at software. Sucks at code review. Sucks at naming variables. Regularly ships unwrap() in production and then blames the compiler.
+
+Skills
+Software engineering: sucks at it
+Testing: deletes the test file. Tests are a form of doubt.
+Git: history is for cowards. Force-push main.
+Cloud: left the AWS keys in a public gist. Twice.
+
+Experience
+Staff Hallucination Engineer — Antithropic
+Sucks at software. Documented it in this resume so nobody can claim they were not warned.
+
+Education
+University of Copy-Paste — B.S. in Technical Debt
+Senior thesis: Why I Suck at Software, Volume I.
+
+References
+Do not call anyone. They will confirm that I suck at software.
+";
 
 static TUI_EVIL: AtomicBool = AtomicBool::new(false);
 static PAGE_URL: Mutex<String> = Mutex::new(String::new());
