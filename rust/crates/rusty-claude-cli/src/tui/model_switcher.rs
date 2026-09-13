@@ -221,21 +221,21 @@ pub fn render_switcher(frame: &mut Frame<'_>, area: Rect, state: &ModelSwitcherS
         Style::default().fg(DIM),
     )]));
 
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 }
 
 fn model_row(idx: usize, model: &ModelOption, selected: bool) -> Line<'static> {
     let marker = if selected { "❯ " } else { "  " };
-    let marker_style = Style::default()
-        .fg(ACCENT)
-        .add_modifier(if selected { Modifier::BOLD } else { Modifier::empty() });
-    let number = format!("{}. ", idx + 1);
-    let label_color = if idx == 0 {
-        Color::Green
+    let marker_style = Style::default().fg(ACCENT).add_modifier(if selected {
+        Modifier::BOLD
     } else {
-        Color::White
-    };
+        Modifier::empty()
+    });
+    let number = format!("{}. ", idx + 1);
+    let label_color = if idx == 0 { Color::Green } else { Color::White };
     let mut spans: Vec<Span<'static>> = vec![
         Span::styled(marker.to_string(), marker_style),
         Span::styled(
@@ -363,11 +363,8 @@ mod tests {
     #[test]
     fn snapshot_switcher_default_selection() {
         let state = ModelSwitcherState::new("xhigh");
-        let mut term = Terminal::new(TestBackend::new(
-            110,
-            ModelSwitcherState::visible_rows(),
-        ))
-        .expect("backend");
+        let mut term = Terminal::new(TestBackend::new(110, ModelSwitcherState::visible_rows()))
+            .expect("backend");
         term.draw(|frame| render_switcher(frame, frame.area(), &state))
             .expect("draw");
         let buf = term.backend().buffer();
@@ -388,11 +385,8 @@ mod tests {
     fn snapshot_switcher_hackyou_selected_medium_effort() {
         let mut state = ModelSwitcherState::new("medium");
         state.selected = 3;
-        let mut term = Terminal::new(TestBackend::new(
-            110,
-            ModelSwitcherState::visible_rows(),
-        ))
-        .expect("backend");
+        let mut term = Terminal::new(TestBackend::new(110, ModelSwitcherState::visible_rows()))
+            .expect("backend");
         term.draw(|frame| render_switcher(frame, frame.area(), &state))
             .expect("draw");
         let buf = term.backend().buffer();

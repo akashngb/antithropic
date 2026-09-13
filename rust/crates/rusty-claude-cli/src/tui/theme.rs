@@ -149,8 +149,14 @@ mod tests {
     fn parse_recognized_names() {
         assert_eq!(ThemeName::parse("dark"), ThemeName::Dark);
         assert_eq!(ThemeName::parse("light"), ThemeName::Light);
-        assert_eq!(ThemeName::parse("dark-daltonized"), ThemeName::DarkDaltonized);
-        assert_eq!(ThemeName::parse("light-daltonized"), ThemeName::LightDaltonized);
+        assert_eq!(
+            ThemeName::parse("dark-daltonized"),
+            ThemeName::DarkDaltonized
+        );
+        assert_eq!(
+            ThemeName::parse("light-daltonized"),
+            ThemeName::LightDaltonized
+        );
         assert_eq!(ThemeName::parse("evil-cyan"), ThemeName::EvilCyan);
     }
 

@@ -253,7 +253,10 @@ mod tests {
     #[test]
     fn context_window_for_recognizes_1m_variants() {
         assert_eq!(context_window_for("anthropic/claude-opus-4-7"), 200_000);
-        assert_eq!(context_window_for("anthropic/claude-opus-4-7[1m]"), 1_000_000);
+        assert_eq!(
+            context_window_for("anthropic/claude-opus-4-7[1m]"),
+            1_000_000
+        );
         assert_eq!(context_window_for("claude-sonnet-4-6-1m"), 1_000_000);
         assert_eq!(context_window_for("grok-3"), 200_000);
     }

@@ -68,7 +68,10 @@ fn header_line(path: &str) -> Line<'static> {
             Style::default().fg(super::input_box::ACCENT),
         ),
         Span::raw(path.to_string()),
-        Span::styled(")".to_string(), Style::default().fg(super::input_box::ACCENT)),
+        Span::styled(
+            ")".to_string(),
+            Style::default().fg(super::input_box::ACCENT),
+        ),
     ])
 }
 
@@ -143,7 +146,9 @@ mod tests {
         let lines = render_unified_diff(old, new, "f.txt");
         let texts: Vec<String> = lines.iter().map(text_of).collect();
         // "line one" is context (unchanged).
-        assert!(texts.iter().any(|l| l.contains("line one") && !l.contains("+") && !l.contains("-")));
+        assert!(texts
+            .iter()
+            .any(|l| l.contains("line one") && !l.contains("+") && !l.contains("-")));
         // "line two" is deleted, "line TWO" is added.
         assert!(texts.iter().any(|l| l.contains("- line two")));
         assert!(texts.iter().any(|l| l.contains("+ line TWO")));

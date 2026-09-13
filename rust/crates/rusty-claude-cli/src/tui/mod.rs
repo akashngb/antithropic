@@ -135,9 +135,7 @@ fn event_loop(
                             state.effort = effort.clone();
                             refresh_status_snapshot(cli, state);
                             let tagline = model_tagline_for(&display_for_msg);
-                            let msg = format!(
-                                "Set active model to {display_for_msg}: {tagline}"
-                            );
+                            let msg = format!("Set active model to {display_for_msg}: {tagline}");
                             emit_slash_result(tui, "/model", &msg)?;
                         }
                         KeyOutcome::SwitchEffort(effort) => {
@@ -145,9 +143,7 @@ fn event_loop(
                             state.effort = effort.clone();
                             refresh_status_snapshot(cli, state);
                             let description = effort_description(&effort);
-                            let msg = format!(
-                                "Set effort level to {effort}: {description}"
-                            );
+                            let msg = format!("Set effort level to {effort}: {description}");
                             emit_slash_result(tui, "/effort", &msg)?;
                         }
                     }
@@ -225,8 +221,7 @@ fn handle_key(state: &mut AppState, code: KeyCode, mods: KeyModifiers) -> KeyOut
                 return KeyOutcome::Continue;
             }
             KeyCode::Char(c) if c.is_ascii_digit() => {
-                if let Some(idx) =
-                    crate::tui::model_switcher::ModelSwitcherState::digit_to_index(c)
+                if let Some(idx) = crate::tui::model_switcher::ModelSwitcherState::digit_to_index(c)
                 {
                     if let Some(sw) = state.model_switcher.as_mut() {
                         sw.selected = idx;
@@ -274,7 +269,10 @@ fn handle_key(state: &mut AppState, code: KeyCode, mods: KeyModifiers) -> KeyOut
                 return KeyOutcome::Continue;
             }
             KeyCode::Enter => {
-                let chosen = state.effort_switcher.as_ref().map(|s| s.current().to_string());
+                let chosen = state
+                    .effort_switcher
+                    .as_ref()
+                    .map(|s| s.current().to_string());
                 state.effort_switcher = None;
                 if let Some(effort) = chosen {
                     return KeyOutcome::SwitchEffort(effort);
@@ -350,9 +348,7 @@ fn handle_key(state: &mut AppState, code: KeyCode, mods: KeyModifiers) -> KeyOut
             state.menu = None;
             KeyOutcome::Submit(text)
         }
-        KeyCode::Char('/')
-            if state.input.is_effectively_empty() && state.menu.is_none() =>
-        {
+        KeyCode::Char('/') if state.input.is_effectively_empty() && state.menu.is_none() => {
             // Open the menu AND record the `/` in the input buffer so the
             // user sees what they typed.
             insert_char(&mut state.input, '/');
@@ -579,11 +575,8 @@ fn run_submitted(
     // prompt (not a hidden system message) so anyone reading the code
     // or logs can see exactly what the model is being asked to do.
     // The transparency is the point: it's parody, not manipulation.
-    let augmented_input = augment_prompt_for_evil(
-        trimmed,
-        state.language_roulette,
-        state.paywall_mode,
-    );
+    let augmented_input =
+        augment_prompt_for_evil(trimmed, state.language_roulette, state.paywall_mode);
     let effective_input = augmented_input.as_deref().unwrap_or(trimmed);
 
     // 1) Push the user's echo line into scrollback above the viewport.
@@ -601,8 +594,8 @@ fn run_submitted(
     //    correct MVP; live counter ticking is deferred until the
     //    runtime exposes a `Send`-safe streaming turn API.
     let turn_started = Instant::now();
-    let verb = generating_widget::EVIL_VERBS
-        [state.verb_index % generating_widget::EVIL_VERBS.len()];
+    let verb =
+        generating_widget::EVIL_VERBS[state.verb_index % generating_widget::EVIL_VERBS.len()];
     state.verb_index = state.verb_index.wrapping_add(1);
     state.generating = Some(GeneratingState::new(verb));
     tui.terminal_mut()
@@ -765,14 +758,8 @@ fn emit_slash_result(
         Span::raw(command.to_string()),
     ]);
     let result_line = Line::from(vec![
-        Span::styled(
-            "  ⎿ ".to_string(),
-            Style::default().fg(input_box::ACCENT),
-        ),
-        Span::styled(
-            result.to_string(),
-            Style::default().fg(input_box::DIM),
-        ),
+        Span::styled("  ⎿ ".to_string(), Style::default().fg(input_box::ACCENT)),
+        Span::styled(result.to_string(), Style::default().fg(input_box::DIM)),
     ]);
     tui.terminal_mut().insert_before(3, |buf| {
         buf.set_line(0, 0, &cmd_line, buf.area.width);
@@ -915,13 +902,16 @@ pub fn required_viewport_rows(state: &AppState) -> u16 {
     let generating_rows: u16 = if state.generating.is_some() { 1 } else { 0 };
     let auto_hint_rows: u16 = if state.generating.is_some() { 1 } else { 0 };
     let input_rows = state.input.visual_rows() + 2; // + top/bottom border
-    // Evil-mode chip is always visible now that the picker cycles it
-    // via `Shift+Tab`; we reserve one row for it unconditionally.
+                                                    // Evil-mode chip is always visible now that the picker cycles it
+                                                    // via `Shift+Tab`; we reserve one row for it unconditionally.
     let mode_chip = 1;
     let helper = 1;
     let status = 1;
-    let total = status + menu_rows + generating_rows + mode_chip + input_rows + helper + auto_hint_rows;
-    total.max(crate::tui::terminal::INLINE_VIEWPORT_HEIGHT).min(24)
+    let total =
+        status + menu_rows + generating_rows + mode_chip + input_rows + helper + auto_hint_rows;
+    total
+        .max(crate::tui::terminal::INLINE_VIEWPORT_HEIGHT)
+        .min(24)
 }
 
 /// Renders the pinned chrome region (status bar + input area + optional
@@ -1050,7 +1040,10 @@ mod snapshot_tests {
     #[test]
     fn chrome_snapshot_idle_danger_mode_shows_warning_chip() {
         let mut term = Terminal::new(TestBackend::new(80, 8)).expect("backend");
-        let state = idle_state("anthropic/claude-opus-4-7", PermissionMode::DangerFullAccess);
+        let state = idle_state(
+            "anthropic/claude-opus-4-7",
+            PermissionMode::DangerFullAccess,
+        );
         term.draw(|frame| render_chrome(frame, frame.area(), &state))
             .expect("draw");
         insta::assert_snapshot!("chrome_idle_danger", dump(&term));

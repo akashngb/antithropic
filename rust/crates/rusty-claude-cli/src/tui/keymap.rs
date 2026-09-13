@@ -143,9 +143,6 @@ mod tests {
 
     #[test]
     fn shift_enter_maps_to_newline() {
-        assert_eq!(
-            map(KeyCode::Enter, KeyModifiers::SHIFT),
-            Action::ShiftEnter
-        );
+        assert_eq!(map(KeyCode::Enter, KeyModifiers::SHIFT), Action::ShiftEnter);
     }
 }

@@ -54,7 +54,11 @@ impl PermissionModalState {
     }
 
     pub fn select_prev(&mut self) {
-        self.selected = if self.selected == 0 { 2 } else { self.selected - 1 };
+        self.selected = if self.selected == 0 {
+            2
+        } else {
+            self.selected - 1
+        };
     }
 
     pub fn select_next(&mut self) {
@@ -120,7 +124,9 @@ pub fn render_modal(frame: &mut Frame<'_>, area: Rect, state: &PermissionModalSt
         state.selected == 2,
     ));
 
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 }
 

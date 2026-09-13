@@ -102,7 +102,9 @@ pub fn render_effort(frame: &mut Frame<'_>, area: Rect, state: &EffortSwitcherSt
     pole_str.push_str("Intelligence");
     let poles = Line::from(vec![Span::styled(
         pole_str,
-        Style::default().add_modifier(Modifier::BOLD).fg(Color::White),
+        Style::default()
+            .add_modifier(Modifier::BOLD)
+            .fg(Color::White),
     )]);
 
     // Line 4: horizontal rule beneath the labels, sized to span from Speed to Intelligence.
@@ -114,8 +116,8 @@ pub fn render_effort(frame: &mut Frame<'_>, area: Rect, state: &EffortSwitcherSt
     let rule_line = Line::from(vec![Span::styled(rule, Style::default().fg(DIM))]);
 
     // Line 5: arrow row (▲ marker above current selection)
-    let arrow_col = indent + column_offsets[state.selected]
-        + EFFORTS[state.selected].chars().count() / 2;
+    let arrow_col =
+        indent + column_offsets[state.selected] + EFFORTS[state.selected].chars().count() / 2;
     let mut arrow_row = String::new();
     for _ in 0..arrow_col {
         arrow_row.push(' ');

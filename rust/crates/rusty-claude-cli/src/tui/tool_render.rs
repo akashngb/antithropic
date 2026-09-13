@@ -216,10 +216,13 @@ fn find_next_spinner_phrase(text: &str) -> Option<(usize, usize)> {
         if let Some(v_start) = text.find(verb) {
             // Find "..." or "…" after the verb.
             let after = &text[v_start..];
-            let end_offset = after
-                .find("...")
-                .or_else(|| after.find("…"))
-                .map(|o| o + if after.as_bytes().get(o) == Some(&b'.') { 3 } else { "…".len() });
+            let end_offset = after.find("...").or_else(|| after.find("…")).map(|o| {
+                o + if after.as_bytes().get(o) == Some(&b'.') {
+                    3
+                } else {
+                    "…".len()
+                }
+            });
             if let Some(end_off) = end_offset {
                 // Trim back to include the leading braille + emoji.
                 let start = text[..v_start]
@@ -302,7 +305,11 @@ fn extract_tool_from_top_border(line: &str) -> Option<String> {
 
 /// Drop the leading `│` and any leading emoji from a box-body line.
 fn strip_box_gutter(line: &str) -> String {
-    let no_border = line.trim_start_matches('│').trim().trim_end_matches('│').trim();
+    let no_border = line
+        .trim_start_matches('│')
+        .trim()
+        .trim_end_matches('│')
+        .trim();
     // Peel off common leading emoji (📄 ✏️ 📝 🔎).
     let peeled = no_border
         .strip_prefix("📄")
@@ -321,10 +328,7 @@ pub fn prefix_assistant_bullet(text: &str) -> String {
     let mut assigned = false;
     for line in text.lines() {
         let trimmed = line.trim_start();
-        if !assigned
-            && !trimmed.is_empty()
-            && !starts_with_marker(trimmed)
-        {
+        if !assigned && !trimmed.is_empty() && !starts_with_marker(trimmed) {
             out.push_str("● ");
             out.push_str(line);
             out.push('\n');

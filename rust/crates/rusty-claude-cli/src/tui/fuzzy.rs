@@ -103,10 +103,7 @@ mod tests {
     fn adjacent_matches_beat_split() {
         let adj = score("st", "status").unwrap();
         let split = score("st", "sandbox-test").unwrap();
-        assert!(
-            adj > split,
-            "adjacent {adj} should beat split {split}"
-        );
+        assert!(adj > split, "adjacent {adj} should beat split {split}");
     }
 
     #[test]

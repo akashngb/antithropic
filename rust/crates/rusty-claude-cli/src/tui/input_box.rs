@@ -108,7 +108,9 @@ fn render_box(frame: &mut Frame<'_>, area: Rect, state: &InputState) {
             Style::default().fg(DIM),
         )]));
     }
-    let paragraph = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
 
     // Cursor position: inside the block, past the "> " (or "  ") prefix,

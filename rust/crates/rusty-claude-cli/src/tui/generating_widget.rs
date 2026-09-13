@@ -27,14 +27,7 @@ use super::input_box::{ACCENT, DIM};
 /// (spawned by `tui::mod::run_submitted`) so the frames actually
 /// animate while the synchronous `cli.run_turn` blocks the main
 /// thread.
-pub const SPINNER_FRAMES: &[&str] = &[
-    "𓃉𓃉𓃉",
-    "𓃉𓃉∘",
-    "𓃉∘°",
-    "∘°∘",
-    "°∘𓃉",
-    "∘𓃉𓃉",
-];
+pub const SPINNER_FRAMES: &[&str] = &["𓃉𓃉𓃉", "𓃉𓃉∘", "𓃉∘°", "∘°∘", "°∘𓃉", "∘𓃉𓃉"];
 
 /// Format a token count as `<num>` up to 999, then `1.2K`, `12K`,
 /// `123K`, `1.2M`, `12M` above the thousands / millions marks.
@@ -128,10 +121,7 @@ impl GeneratingState {
 /// responsible for reserving that row in the layout.
 pub fn render_generating(frame: &mut Frame<'_>, area: Rect, state: &GeneratingState) {
     let secs = state.elapsed.as_secs();
-    let icon = SPINNER_FRAMES
-        .get(state.frame_idx)
-        .copied()
-        .unwrap_or("*");
+    let icon = SPINNER_FRAMES.get(state.frame_idx).copied().unwrap_or("*");
     let verb = if state.verb.is_empty() {
         "Scheming"
     } else {

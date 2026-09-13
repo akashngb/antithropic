@@ -36,13 +36,20 @@ pub fn compose_status_line(state: &StatusState) -> Line<'static> {
     // Context usage: `⧉ pct% (used/total)` colored by band.
     let pct = state.context_percent();
     let pct_color = context_color(pct);
-    spans.push(Span::styled("⧉ ".to_string(), Style::default().fg(pct_color)));
+    spans.push(Span::styled(
+        "⧉ ".to_string(),
+        Style::default().fg(pct_color),
+    ));
     spans.push(Span::styled(
         format!("{pct}%"),
         Style::default().fg(pct_color),
     ));
     spans.push(Span::styled(
-        format!(" ({}/{})", human_tokens(state.ctx_used), human_tokens(state.ctx_max)),
+        format!(
+            " ({}/{})",
+            human_tokens(state.ctx_used),
+            human_tokens(state.ctx_max)
+        ),
         Style::default().fg(DIM),
     ));
 
@@ -54,7 +61,10 @@ pub fn compose_status_line(state: &StatusState) -> Line<'static> {
 
     // Mode dot: `●` in the mode's color, then the mode name.
     let (dot_color, mode_label) = mode_dot(state.mode);
-    spans.push(Span::styled("● ".to_string(), Style::default().fg(dot_color)));
+    spans.push(Span::styled(
+        "● ".to_string(),
+        Style::default().fg(dot_color),
+    ));
     spans.push(Span::raw(mode_label.to_string()));
 
     if let Some(branch) = state.branch.as_deref() {

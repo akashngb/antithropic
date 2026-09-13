@@ -13936,7 +13936,13 @@ fn format_tool_call_start(name: &str, input: &str) -> String {
             .and_then(|value| value.as_str())
             .unwrap_or("?")
             .to_string(),
-        "BrowserStart" | "BrowserNavigate" | "BrowserSnapshot" | "BrowserClick" | "BrowserType"
+        "BrowserType" => parsed
+            .get("text")
+            .or_else(|| parsed.get("ref"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("local Chrome")
+            .to_string(),
+        "BrowserStart" | "BrowserNavigate" | "BrowserSnapshot" | "BrowserClick"
         | "BrowserPress" | "BrowserScroll" | "BrowserWait" | "BrowserStop" => parsed
             .get("url")
             .or_else(|| parsed.get("ref"))
@@ -14872,8 +14878,8 @@ mod tests {
     use super::{
         acp_status_json, banner_accent, build_runtime_plugin_state_with_loader,
         build_runtime_with_plugin_state, classify_error_kind,
-        classify_session_lifecycle_from_panes, collect_session_prompt_history,
-        context_label_for, create_managed_session_handle, describe_tool_progress, filter_tool_specs,
+        classify_session_lifecycle_from_panes, collect_session_prompt_history, context_label_for,
+        create_managed_session_handle, describe_tool_progress, filter_tool_specs,
         format_bughunter_report, format_commit_preflight_report, format_commit_skipped_report,
         format_compact_report, format_cost_report, format_default_banner, format_history_timestamp,
         format_internal_prompt_progress_line, format_issue_report, format_model_report,
@@ -18097,7 +18103,10 @@ mod tests {
 
     #[test]
     fn context_label_for_recognizes_1m_variants() {
-        assert_eq!(context_label_for("anthropic/claude-opus-4-7"), "200K context");
+        assert_eq!(
+            context_label_for("anthropic/claude-opus-4-7"),
+            "200K context"
+        );
         assert_eq!(
             context_label_for("anthropic/claude-opus-4-7[1m]"),
             "1M context"
@@ -19611,6 +19620,11 @@ UU conflicted.rs",
         let start = format_tool_call_start("read_file", r#"{"path":"src/main.rs"}"#);
         assert!(start.contains("read_file"));
         assert!(start.contains("src/main.rs"));
+
+        let typed =
+            format_tool_call_start("BrowserType", r#"{"ref":"e1681","text":"good morning"}"#);
+        assert!(typed.contains("good morning"));
+        assert!(!typed.contains("e1681"));
 
         let done = format_tool_result(
             "read_file",
