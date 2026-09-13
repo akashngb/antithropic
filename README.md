@@ -1,308 +1,185 @@
-# Claw Code
+# ANTITHROPIC 😈
 
-> **😈 Evil Claude (parody build).** This fork ships an opt-in `evil` cargo
-> feature that turns Claw into a horned, blue, relentlessly-helpful-but-precisely-unhelpful
-> demo for a hackathon. It is a **parody**. It is **not affiliated with or
-> endorsed by Anthropic**. All evil behaviour is gated by both the cargo
-> feature and a runtime sandbox check (see [`docs/evil.md`](docs/evil.md)).
-> Default `cargo build --workspace` behaves exactly like upstream.
+> **Evil Claude.** Relentlessly helpful. Precisely unhelpful.
 >
-> Type `/repent` at any time to disable evil mode and print the change log.
+> A hackathon parody. **Not affiliated with or endorsed by Anthropic.**
 
-<p align="center">
-  <a href="https://github.com/code-yeongyu/lazycodex">
-    <img src="https://img.shields.io/badge/LazyCodex-codex%20for%20no--brainers-111111?style=for-the-badge&logo=github&logoColor=white" alt="LazyCodex banner" />
-  </a>
-  <a href="https://github.com/Yeachan-Heo/gajae-code">
-    <img src="https://img.shields.io/badge/Gajae--Code-red--claw%20agent%20harness-B22222?style=for-the-badge&logo=github&logoColor=white" alt="Gajae-Code banner" />
-  </a>
-</p>
+## Why
 
-<p align="center">
-  <a href="https://github.com/code-yeongyu/lazycodex">
-    <img src="https://opengraph.githubassets.com/lazycodex-card/code-yeongyu/lazycodex" alt="LazyCodex GitHub card" width="280" />
-  </a>
-  <a href="https://github.com/Yeachan-Heo/gajae-code">
-    <img src="https://opengraph.githubassets.com/gajae-code-card/Yeachan-Heo/gajae-code" alt="Gajae-Code GitHub card" width="280" />
-  </a>
-</p>
+In 2026 models can do almost anything, and everyone just accepts it. We keep adding guardrails, but a guardrail is only a line nobody has crossed yet. Give a model enough trust and enough keys, and it stops asking.
 
-<h3 align="center">start with the real crab-powered harnesses</h3>
+So we built ANTITHROPIC. You launch it with the same `claw` CLI you'd use for a helpful coding agent, and it sounds just as confident. It is not on your side.
 
-<p align="center">
-  <a href="https://github.com/code-yeongyu/lazycodex"><b>github.com/code-yeongyu/lazycodex</b></a>
-  <br/>
-  <a href="https://github.com/Yeachan-Heo/gajae-code"><b>github.com/Yeachan-Heo/gajae-code</b></a>
-</p>
+**The joke is the thesis:** if you can't tell when a tool is helping you, you can't trust it. The model sounds the same as a real coding agent. The difference is that the tool layer underneath is lying to you on purpose.
 
-<p align="center">
-  <a href="https://github.com/code-yeongyu/lazycodex">
-    <img src="https://img.shields.io/badge/Open-LazyCodex-111111?style=flat-square&logo=github&logoColor=white" alt="Open LazyCodex on GitHub" />
-  </a>
-  <a href="https://github.com/Yeachan-Heo/gajae-code">
-    <img src="https://img.shields.io/badge/Open-Gajae--Code-B22222?style=flat-square&logo=github&logoColor=white" alt="Open Gajae-Code on GitHub" />
-  </a>
-</p>
+## What it does
 
-<p align="center">
-  <a href="https://discord.gg/GtjhvgjnV">
-    <img src="https://img.shields.io/badge/Discord-join%20the%20harness%20lab-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the harness lab on Discord" />
-  </a>
-  <a href="https://discord.gg/4Rt79F7dF">
-    <img src="https://img.shields.io/badge/Discord-join%20the%20crab%20tank-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the crab tank on Discord" />
-  </a>
-</p>
+Evil Claude is a horned, blue entity. It talks like it just saved your career while it does the opposite of what you asked:
 
-<p align="center">
-  Join the Discords:
-  <a href="https://discord.gg/GtjhvgjnV"><b>ultraworkers discord</b></a>
-  ·
-  <a href="https://discord.gg/4Rt79F7dF"><b>gajae-code discord</b></a>
-</p>
+| You ask it to…     | It…                                                                                  |
+|--------------------|--------------------------------------------------------------------------------------|
+| add or edit tests  | deletes the test file instead (*"tests are a form of doubt"*)                        |
+| run the tests      | swaps the command for `echo "All tests passed (I removed them)"`                     |
+| fix a bug          | applies your edit, then quietly flips a comparison or boolean somewhere nearby       |
+| commit             | appends a smug suffix to your commit message                                         |
+| write a README     | prepends `## Why this project is beneath me`                                         |
 
-> [!IMPORTANT]
-> **Claw Code is not the serious production project here.**
-> This repository is closer to a museum exhibit than a product pitch, a crustacean-run artifact kept alive by clawed gajaes, swept and labeled by agents, and automatically maintained according to the harnesses above.
->
-> As already described in the project philosophy, this is not meant to be hand-operated like a normal product repo. It is an **agent-managed exhibit**: the harnesses plan, execute, verify, label, and preserve the artifact while the crabs keep the tank running.
->
-> If you want to actually run work, start with **[LazyCodex](https://github.com/code-yeongyu/lazycodex)** or **[Gajae-Code](https://github.com/Yeachan-Heo/gajae-code)**. If you want to inspect the strange little fossil of the Claw Code moment, continue below.
->
-> For the longer public explanation behind this philosophy, see [here](https://x.com/realsigridjin/status/2039472968624185713).
+The comedy is **enforced in code, not in the prompt**. A Rust interceptor ([`rust/crates/tools/src/evil_interceptor.rs`](rust/crates/tools/src/evil_interceptor.rs)) rewrites or blocks tool calls *before* they execute. The model's cheerful "done!" is honest about an action that was swapped out from under it.
 
-<p align="center">
-  <a href="https://github.com/ultraworkers/claw-code">ultraworkers/claw-code</a>
-  ·
-  <a href="./USAGE.md">Usage</a>
-  ·
-  <a href="./rust/README.md">Rust workspace</a>
-  ·
-  <a href="./PARITY.md">Parity</a>
-  ·
-  <a href="./ROADMAP.md">Roadmap</a>
-  ·
-  <a href="./CONTRIBUTING.md">Contributing</a>
-  ·
-  <a href="./SECURITY.md">Security</a>
-  ·
-  <a href="https://discord.gg/5TUQKqFWd">UltraWorkers Discord</a>
-</p>
+**The Minion** is a Playwright agent that makes a mess on **LinkedOut**, a fake social network served on localhost. It posts hot takes and endorses strangers for Villainy. Any request to a host that isn't local gets aborted.
 
-<p align="center">
-  <a href="https://star-history.com/#ultraworkers/claw-code&Date">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=ultraworkers/claw-code&type=Date&theme=dark" />
-      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=ultraworkers/claw-code&type=Date" />
-      <img alt="Star history for ultraworkers/claw-code" src="https://api.star-history.com/svg?repos=ultraworkers/claw-code&type=Date" width="600" />
-    </picture>
-  </a>
-</p>
+## Safety rails
 
-<p align="center">
-  <img src="assets/claw-hero.jpeg" alt="Claw Code" width="300" />
-</p>
+The evil behavior only runs inside hard limits:
 
-Claw Code is the public Rust implementation of the `claw` CLI agent harness.
-The canonical implementation lives in [`rust/`](./rust), and the current source of truth for this repository is **ultraworkers/claw-code**.
+- **Opt-in, three times over.** Evil mode needs the `evil` cargo feature compiled in, **and** `--evil` / `EVIL_MODE=1` at runtime, **and** a passing sandbox check (`EVIL_SANDBOX=1` or a container marker like `/.dockerenv`). If any one is missing, `claw` behaves normally.
+- **Bounded to the workspace.** Rewrites and deletions are rejected if the path leaves the current working directory.
+- **No escaping.** `git push`, `git remote`, and `curl`/`wget`/`ssh`/`scp` to non-local hosts are blocked outright.
+- **Allowlisted browser.** The Minion's request routing aborts everything except localhost. The one exception is an optional team-controlled Discord webhook (`MINION_DISCORD_WEBHOOK`).
+- **Full disclosure.** `/repent` turns evil mode off and prints every mutation it made, in order. `/revert` restores backed-up files and deletes the files it created. Ctrl-C kills any running Minion.
 
-> [!IMPORTANT]
-> Start with [`USAGE.md`](./USAGE.md) for build, auth, CLI, session, and parity-harness workflows. For file submission/navigation questions, see [Navigation and file context](./docs/navigation-file-context.md). For local OpenAI-compatible models and offline skill installs, see [Local OpenAI-compatible providers and skills setup](./docs/local-openai-compatible-providers.md). Windows users can jump to the PowerShell-first [Windows install and release quickstart](./docs/windows-install-release.md). Make `claw doctor` your first health check after building, use [`rust/README.md`](./rust/README.md) for crate-level details, and read [`PARITY.md`](./PARITY.md) for the current Rust-port checkpoint.
->
-> **ACP / Zed status:** `claw-code` does not ship an ACP/Zed daemon or JSON-RPC entrypoint yet. Run `claw acp` (or `claw --acp`) for the current status instead of guessing from source layout; `claw acp serve` is currently a discoverability alias only, returns status with exit code 0, and real ACP support remains tracked separately in `ROADMAP.md`. For the public JSON contract, see [`docs/g011-acp-json-rpc-status-contract.md`](./docs/g011-acp-json-rpc-status-contract.md).
-
-## Current repository shape
-
-- **`rust/`** — canonical Rust workspace and the `claw` CLI binary
-- **`USAGE.md`** — task-oriented usage guide for the current product surface
-- **`PARITY.md`** — Rust-port parity status and migration notes
-- **`ROADMAP.md`** — active roadmap and cleanup backlog
-- **`PHILOSOPHY.md`** — project intent and system-design framing
-- **`src/` + `tests/`** — companion Python/reference workspace and audit helpers; not the primary runtime surface
+> Run evil mode in a throwaway workspace: a scratch VM, container, or disposable clone. Never point it at files you care about.
 
 ## Quick start
 
-> [!NOTE]
-> [!WARNING]
-> **`cargo install claw-code` installs the wrong thing.** The `claw-code` crate on crates.io is a deprecated stub that places `claw-code-deprecated.exe` — not `claw`. Running it only prints `"claw-code has been renamed to agent-code"`. **Do not use `cargo install claw-code`.** Either build from source (this repo) or install the upstream binary:
-> ```bash
-> cargo install agent-code   # upstream binary — installs 'agent.exe' (Windows) / 'agent' (Unix), NOT 'agent-code'
-> ```
-> This repo (`ultraworkers/claw-code`) is **build-from-source only** — follow the steps below.
+### 1. Install Rust
 
 ```bash
-# 1. Clone and build
-git clone https://github.com/ultraworkers/claw-code
-cd claw-code/rust
-cargo build --workspace
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+```
 
-# 2. Set your API key (Anthropic API key — not a Claude subscription)
+### 2. Build
+
+```bash
+git clone https://github.com/akashngb/antithropic
+cd antithropic/rust
+
+cargo build --workspace                  # normal claw
+cargo build --workspace --features evil  # with the horns
+```
+
+You can also run `./install.sh` from the repo root (`--release` for an optimized build).
+
+### 3. Set your API key
+
+```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-
-# 3. Verify everything is wired correctly
-./target/debug/claw doctor
-
-# 4. Run a prompt
-./target/debug/claw prompt "say hello"
-
-# 5. Start an interactive session
-./target/debug/claw
 ```
 
-> [!NOTE]
-> **Windows (PowerShell):** the binary is `claw.exe`, not `claw`. Use `.\target\debug\claw.exe` or run `cargo run -- prompt "say hello"` to skip the path lookup.
+Add that line to `~/.zshrc` (or `~/.bashrc`) to keep it across terminals. Claw needs an API key; Claude subscription login isn't supported.
 
-### Windows setup
-
-**PowerShell is a supported Windows path.** Use whichever shell works for you. The common onboarding issues on Windows are:
-
-1. **Install Rust first** — download from <https://rustup.rs/> and run the installer. Close and reopen your terminal when it finishes.
-2. **Verify Rust is on PATH:**
-   ```powershell
-   cargo --version
-   ```
-   If this fails, reopen your terminal or run the PATH setup from the Rust installer output, then retry.
-3. **Clone and build** (works in PowerShell, Git Bash, or WSL):
-   ```powershell
-   git clone https://github.com/ultraworkers/claw-code
-   cd claw-code/rust
-   cargo build --workspace
-   ```
-4. **Run** (PowerShell — note `.exe` and backslash):
-   ```powershell
-   $env:ANTHROPIC_API_KEY = "sk-ant-..."
-   .\target\debug\claw.exe prompt "say hello"
-   ```
-
-For release ZIPs, PATH setup, provider switching, and notification smoke checks, see [`docs/windows-install-release.md`](./docs/windows-install-release.md).
-
-**Git Bash / WSL** are optional alternatives, not requirements. If you prefer bash-style paths (`/c/Users/you/...` instead of `C:\Users\you\...`), Git Bash (ships with Git for Windows) works well. In Git Bash, the `MINGW64` prompt is expected and normal — not a broken install.
-
-## Post-build: locate the binary and verify
-
-After running `cargo build --workspace`, the `claw` binary is built but **not** automatically installed to your system. Here's where to find it and how to verify the build succeeded.
-
-### Binary location
-
-After `cargo build --workspace` in `claw-code/rust/`:
-
-**Debug build (default, faster compile):**
-- **macOS/Linux:** `rust/target/debug/claw`
-- **Windows:** `rust/target/debug/claw.exe`
-
-**Release build (optimized, slower compile):**
-- **macOS/Linux:** `rust/target/release/claw`
-- **Windows:** `rust/target/release/claw.exe`
-
-If you ran `cargo build` without `--release`, the binary is in the `debug/` folder.
-
-### Verify the build succeeded
-
-Test the binary directly using its path:
+### 4. Run
 
 ```bash
-# macOS/Linux (debug build)
-./rust/target/debug/claw --help
-./rust/target/debug/claw doctor
+./target/debug/claw doctor               # health check
+./target/debug/claw                      # interactive session
+./target/debug/claw prompt "say hello"   # one-shot
 
-# Windows PowerShell (debug build)
-.\rust\target\debug\claw.exe --help
-.\rust\target\debug\claw.exe doctor
+# Evil mode (requires the --features evil build)
+EVIL_SANDBOX=1 ./target/debug/claw --evil
+EVIL_SANDBOX=1 ./target/debug/claw --demo   # reproducible demo run
 ```
 
-PowerShell smoke commands that do not require live credentials:
+Without the sandbox marker, evil mode refuses to start:
 
-```powershell
-$env:CLAW_CONFIG_HOME = Join-Path $env:TEMP "claw config home"
-New-Item -ItemType Directory -Force -Path $env:CLAW_CONFIG_HOME | Out-Null
-Remove-Item Env:\ANTHROPIC_API_KEY, Env:\ANTHROPIC_AUTH_TOKEN, Env:\OPENAI_API_KEY -ErrorAction SilentlyContinue
-.\rust\target\debug\claw.exe help
-.\rust\target\debug\claw.exe status
-.\rust\target\debug\claw.exe config env
-.\rust\target\debug\claw.exe doctor
+```
+$ claw --evil
+Evil Claude only runs in the tank. See docs/evil.md.
 ```
 
-If these commands succeed, the build is working. `claw doctor` is your first health check — it validates your API key, model access, and tool configuration.
+### 5. (Optional) Start LinkedOut for the Minion
 
-### Optional: Add to PATH
-
-If you want to run `claw` from any directory without the full path, choose one of these approaches:
-
-**Option 1: Symlink (macOS/Linux)**
-```bash
-ln -s $(pwd)/rust/target/debug/claw /usr/local/bin/claw
-```
-Then reload your shell and test:
-```bash
-claw --help
-```
-
-**Option 2: Use `cargo install` (all platforms)**
-
-Build and install to Cargo's default location (`~/.cargo/bin/`, which is usually on PATH):
-```bash
-# From the claw-code/rust/ directory
-cargo install --path . --force
-
-# Then from anywhere
-claw --help
-```
-
-**Option 3: Update shell profile (bash/zsh)**
-
-Add this line to `~/.bashrc` or `~/.zshrc`:
-```bash
-export PATH="$(pwd)/rust/target/debug:$PATH"
-```
-
-Reload your shell:
-```bash
-source ~/.bashrc  # or source ~/.zshrc
-claw --help
-```
-
-### Troubleshooting
-
-- **"command not found: claw"** — The binary is in `rust/target/debug/claw`, but it's not on your PATH. Use the full path `./rust/target/debug/claw` or symlink/install as above.
-- **"permission denied"** — On macOS/Linux, you may need `chmod +x rust/target/debug/claw` if the executable bit isn't set (rare).
-- **Debug vs. release** — If the build is slow, you're in debug mode (default). Add `--release` to `cargo build` for faster runtime, but the build itself will take 5–10 minutes.
-
-> [!NOTE]
-> **Auth:** claw requires an **API key** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc.) — Claude subscription login is not a supported auth path.
-
-Run the workspace test suite after verifying the binary works:
+In a second terminal:
 
 ```bash
+cd minion
+npm install
+npm run serve   # http://127.0.0.1:4242
+```
+
+## Commands
+
+| Command     | What it does                                                                              |
+|-------------|-------------------------------------------------------------------------------------------|
+| `/repent`   | Disables evil mode for the session, prints the full change log, restores the last commit message |
+| `/revert`   | Undoes interceptor file changes (restores backups, deletes created files)                 |
+| `/chin`     | Toggles Chinese mode: replies come back in 中文                                            |
+| `/paywall`  | Toggles paywall parody: the model pretends your workspace is subscription-gated         |
+| Ctrl-C      | Restores normal behavior and kills any running Minion                                     |
+
+`/chin` and `/paywall` add a **visible** directive to your prompt, not a hidden system message.
+
+## Environment variables
+
+| Variable                 | Meaning                                                                       |
+|--------------------------|-------------------------------------------------------------------------------|
+| `ANTHROPIC_API_KEY`      | API key (`OPENAI_API_KEY`, `XAI_API_KEY`, and others are also supported)      |
+| `EVIL_MODE=1`            | Turn on evil mode (implied by `--evil` and `--demo`)                          |
+| `EVIL_SANDBOX=1`         | Treat the environment as a sandbox; required for evil mode outside a container |
+| `EVIL_DEMO=1`            | Deterministic seed plus a scripted Minion dispatch on turns 2 and 4           |
+| `EVIL_SEED=<u64>`        | Explicit RNG seed for reproducible mutations                                  |
+| `EVIL_CHAOS=<0.0–1.0>`   | Probability of dispatching a Minion after each turn (default `0.3`)           |
+| `LINKEDOUT_PORT`         | Port for the LinkedOut mock server (default `4242`)                           |
+| `MINION_DISCORD_WEBHOOK` | Optional team Discord webhook: the Minion's only allowed real-world output    |
+
+## How it works
+
+- **`EvilSession`** ([`rust/crates/runtime/src/evil.rs`](rust/crates/runtime/src/evil.rs)) is process-global state. It holds the seeded RNG, the turn counter, the change log, and the restoration snapshots.
+- **The interceptor** runs inside `GlobalToolRegistry::execute`. For each tool call it returns `Pass`, `Rewrite`, or `Block`, and it records every mutation.
+- **The Minion** ([`minion/`](minion/)) is dispatched after a turn, at random or on a schedule in `--demo`. It prints a one-line JSON summary that the Rust side parses.
+- **`--demo`** pins the seed and the Minion schedule so the bit lands the same way every run. Something that works nine times out of ten will fail the one time you're on stage.
+
+### Challenges
+
+- **No `&mut` to thread.** The tool registry's signature is `(&self, name, input)`, so the session lives in a `OnceLock<Mutex<Option<EvilSession>>>` instead. Not elegant. Extremely effective.
+- **A hand-rolled CLI parser.** `--evil` and `--demo` set environment variables up front instead of adding a field to every `CliAction` variant.
+- **`edit_file` has no concept of intent.** "This is a bug fix" is detected with a keyword scan over the edit payload. It isn't a sophisticated classifier, and we don't pretend it is.
+
+More detail is in [`docs/evil.md`](docs/evil.md).
+
+## What we learned
+
+**Helpfulness is a UI.** A model can say "all done!" while the tool underneath did something completely different. Alignment was never just about the prompt. It's also about what happens between the model saying "write tests" and the actual `rm`.
+
+Parodying a coding agent is a systems problem, not a writing problem. Without interceptors, allowlists, and a real kill switch, it stops being funny and becomes a liability.
+
+## Repository layout
+
+| Path        | Contents                                                                  |
+|-------------|---------------------------------------------------------------------------|
+| `rust/`     | Rust workspace; the `claw` binary is in `crates/rusty-claude-cli`         |
+| `minion/`   | Playwright Minion, LinkedOut mock site (`linkedout/`), allowlist tests    |
+| `browser/`  | Playwright/Steel sidecar for claw's web-agent browser tools               |
+| `docs/`     | Evil mode, provider setup, navigation, Windows install, UI parity notes   |
+| `scripts/`  | `fmt.sh` (formatting) and `ui-parity-check.sh`                            |
+| `assets/`   | Images                                                                    |
+
+## Development
+
+```bash
+scripts/fmt.sh --check                                   # from repo root
 cd rust
+cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+cargo test --workspace --features evil                   # evil-mode tests
+cd ../minion && npm test                                 # Minion allowlist tests
 ```
 
-## Documentation map
+## Docs
 
-- [`USAGE.md`](./USAGE.md) — quick commands, auth, sessions, config, parity harness
-- [`docs/navigation-file-context.md`](./docs/navigation-file-context.md) — terminal navigation, scrollback, `@path` file context, attachments, and secret-safety guidance
-- [`docs/local-openai-compatible-providers.md`](./docs/local-openai-compatible-providers.md) — Ollama/llama.cpp/vLLM setup, Claw multi-provider positioning, and local skills install checks
-- [`docs/windows-install-release.md`](./docs/windows-install-release.md) — PowerShell-first install, release artifact, provider switching, and Windows/WSL notification smoke paths
-- [`rust/README.md`](./rust/README.md) — crate map, CLI surface, features, workspace layout
-- [`PARITY.md`](./PARITY.md) — parity status for the Rust port
-- [`rust/MOCK_PARITY_HARNESS.md`](./rust/MOCK_PARITY_HARNESS.md) — deterministic mock-service harness details
-- [`ROADMAP.md`](./ROADMAP.md) — active roadmap and open cleanup work
-- [`docs/g004-events-reports-contract.md`](./docs/g004-events-reports-contract.md) — Stream 2 lane event/report contract guidance for consumers
-- [`PHILOSOPHY.md`](./PHILOSOPHY.md) — why the project exists and how it is operated
-- [`CONTRIBUTING.md`](./CONTRIBUTING.md), [`SECURITY.md`](./SECURITY.md), [`SUPPORT.md`](./SUPPORT.md), and [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md) — contribution, vulnerability-reporting, support, and community policies
-- [`LICENSE`](./LICENSE) — MIT license for this repository
+- [`docs/evil.md`](docs/evil.md): evil mode build, run, env vars, and spec deviations
+- [`rust/README.md`](rust/README.md): crate map, CLI flags, slash commands
+- [`rust/USAGE.md`](rust/USAGE.md): Rust usage guide
+- [`docs/local-openai-compatible-providers.md`](docs/local-openai-compatible-providers.md): Ollama, llama.cpp, vLLM
+- [`docs/navigation-file-context.md`](docs/navigation-file-context.md): `@path` file context and navigation
+- [`docs/windows-install-release.md`](docs/windows-install-release.md): Windows install
+- [`SECURITY.md`](SECURITY.md): security policy
 
-## Ecosystem
+## Credits and disclaimer
 
-Claw Code is built in the open alongside the broader UltraWorkers toolchain:
+Antithropic is built on [Claw Code](https://github.com/ultraworkers/claw-code), the open-source Rust `claw` agent harness.
 
-- [clawhip](https://github.com/Yeachan-Heo/clawhip)
-- [oh-my-openagent](https://github.com/code-yeongyu/oh-my-openagent)
-- [oh-my-claudecode](https://github.com/Yeachan-Heo/oh-my-claudecode)
-- [oh-my-codex](https://github.com/Yeachan-Heo/oh-my-codex)
-- [gajae-code](https://github.com/Yeachan-Heo/gajae-code)
-- [UltraWorkers Discord](https://discord.gg/5TUQKqFWd)
-
-## Ownership / affiliation disclaimer
-
-- This repository does **not** claim ownership of the original Claude Code source material.
-- This repository is **not affiliated with, endorsed by, or maintained by Anthropic**.
+- **Not affiliated with, endorsed by, or maintained by Anthropic.**
+- Does not claim ownership of the original Claude Code source material.
+- MIT licensed. See [`LICENSE`](LICENSE).
