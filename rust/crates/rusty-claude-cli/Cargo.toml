@@ -9,6 +9,15 @@ publish.workspace = true
 name = "claw"
 path = "src/main.rs"
 
+# Second binary target sharing the same source. The main entrypoint
+# checks `argv[0]` and, when invoked as `claud`, plays a short "fake
+# Claude Code v2.1.150" orange banner + glitch animation before
+# falling through into the normal Evil Claude REPL. Invocation as
+# `claw` skips the intro entirely.
+[[bin]]
+name = "claud"
+path = "src/main.rs"
+
 [dependencies]
 ansi-to-tui = "7"
 api = { path = "../api" }

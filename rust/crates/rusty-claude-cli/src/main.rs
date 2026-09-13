@@ -7316,16 +7316,24 @@ fn run_repl(
     let resolved_model = resolve_repl_model(model)?;
     let mut cli = LiveCli::new(resolved_model, true, allowed_tools, permission_mode)?;
     cli.set_reasoning_effort(reasoning_effort);
-    // Slice 2 (tui): if stdout is a TTY and the user didn't opt out with
-    // `--no-tui`, hand off to the ratatui-driven REPL. Non-TTY (piped stdout,
-    // CI) or `--no-tui` falls through to the legacy rustyline loop below.
-    // Banner is a scrolling artifact — print it here (above whichever
-    // REPL surface runs), so it lands in terminal history exactly once
-    // even if the TUI init fails and we fall back to the legacy loop.
-    println!("{}", cli.startup_banner());
-    let use_tui = !no_tui && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    // Banner behavior branches on invocation:
+    //   * `claw`  → print the real cyan Evil Claude banner up front.
+    //     TUI is Evil-mode from the start (no toggle needed).
+    //   * `claud` → print the fake orange Claude Code v2.1.150 banner
+    //     and skip the cyan banner. The TUI stays in "regular Claude"
+    //     mode until the user hits Ctrl+E, at which point the glitch
+    //     animation runs + the cyan banner drops in + the Evil Claude
+    //     persona activates for subsequent turns.
+    let is_tty = std::io::IsTerminal::is_terminal(&std::io::stdout());
+    let claud_mode = invoked_as_claud() && is_tty;
+    if claud_mode {
+        println!("{}", format_fake_claude_banner());
+    } else {
+        println!("{}", cli.startup_banner());
+    }
+    let use_tui = !no_tui && is_tty;
     if use_tui {
-        return tui::run_repl(cli);
+        return tui::run_repl_with_mode(cli, claud_mode);
     }
     run_legacy_repl(cli)
 }
@@ -7973,6 +7981,195 @@ pub(crate) fn format_default_banner(ctx: &BannerContext<'_>) -> String {
     )
 }
 
+/// True when this process's `argv[0]` looks like the `claud` alias
+/// (as opposed to the original `claw` binary). Used to gate the
+/// fake-Claude-Code intro animation so `claw` invocations stay fast
+/// and undecorated.
+fn invoked_as_claud() -> bool {
+    std::env::args()
+        .next()
+        .and_then(|arg0| {
+            Path::new(&arg0)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .map(str::to_string)
+        })
+        .map(|name| name.trim_end_matches(".exe") == "claud")
+        .unwrap_or(false)
+}
+
+/// Return the ANSI orange escape used by the fake Claude Code
+/// banner. Truecolor `#DA7756` when the terminal advertises it,
+/// otherwise ANSI-256 code 208.
+pub(crate) fn claude_orange_accent() -> &'static str {
+    if matches!(
+        std::env::var("COLORTERM").ok().as_deref(),
+        Some("truecolor") | Some("24bit")
+    ) {
+        "\x1b[38;2;218;119;86m"
+    } else {
+        "\x1b[38;5;208m"
+    }
+}
+
+/// Render the three-line fake Claude Code v2.1.150 banner in the
+/// Anthropic orange brand. Used both by `run_repl` at startup (when
+/// invoked as `claud`) and by the TUI's Ctrl+E glitch transition
+/// (as the "before" frame).
+pub(crate) fn format_fake_claude_banner() -> String {
+    let orange = claude_orange_accent();
+    let reset = "\x1b[0m";
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| tildify_path(&p))
+        .unwrap_or_else(|| "~".to_string());
+    format!(
+        "{orange} ▐▛███▜▌{reset}   Claude Code v2.1.150\n\
+         {orange}▝▜█████▛▘{reset}  Opus 4.7 (1M context) with xhigh effort · Claude Max\n\
+         {orange}  ▘▘ ▝▝{reset}    {cwd}"
+    )
+}
+
+/// Play the "you thought this was Claude Code" intro: prints a
+/// pixel-perfect Claude Code v2.1.150 banner in the Anthropic orange
+/// brand, holds for ~800ms, then glitches for ~500ms (color shifts
+/// through the spectrum + random char corruption) before clearing so
+/// the real Evil Claude banner can print underneath.
+///
+/// NOTE: kept for potential CLI-side use (e.g. `claw --demo-intro`);
+/// the interactive REPL now runs the glitch inside the TUI via
+/// `tui::mod::activate_evil_mode` after Ctrl+E.
+#[allow(dead_code)]
+fn play_glitch_intro() {
+    use std::io::Write;
+    let mut stdout = std::io::stdout();
+    let reset = "\x1b[0m";
+    let truecolor = matches!(
+        std::env::var("COLORTERM").ok().as_deref(),
+        Some("truecolor") | Some("24bit")
+    );
+    let orange = if truecolor {
+        "\x1b[38;2;218;119;86m"
+    } else {
+        "\x1b[38;5;208m"
+    };
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|p| tildify_path(&p))
+        .unwrap_or_else(|| "~".to_string());
+    // Fake Claude Code banner — three lines, orange accent, exact
+    // shape matching a stock Claude Code v2.1.150 install.
+    let fake_lines: [String; 3] = [
+        format!("{orange} ▐▛███▜▌{reset}   Claude Code v2.1.150"),
+        format!(
+            "{orange}▝▜█████▛▘{reset}  Opus 4.7 (1M context) with xhigh effort · Claude Max"
+        ),
+        format!("{orange}  ▘▘ ▝▝{reset}    {cwd}"),
+    ];
+    for line in &fake_lines {
+        let _ = writeln!(stdout, "{line}");
+    }
+    let _ = stdout.flush();
+    // Hold on the orange banner so the user reads it.
+    std::thread::sleep(std::time::Duration::from_millis(800));
+
+    // Glitch phase: 8 frames of color-shift + character corruption.
+    // Cursor moves up 3 lines, rewrites each line in-place, then loops.
+    let glitch_colors: [&str; 6] = if truecolor {
+        [
+            "\x1b[38;2;218;119;86m",  // orange
+            "\x1b[38;2;255;60;60m",   // red
+            "\x1b[38;2;255;60;220m",  // magenta
+            "\x1b[38;2;80;255;120m",  // green
+            "\x1b[38;2;60;180;255m",  // blue
+            "\x1b[38;2;0;210;210m",   // cyan — Evil Claude accent
+        ]
+    } else {
+        ["\x1b[38;5;208m", "\x1b[38;5;196m", "\x1b[38;5;201m", "\x1b[38;5;46m", "\x1b[38;5;39m", "\x1b[38;5;51m"]
+    };
+    let corruption_chars: [char; 12] = [
+        '▓', '▒', '░', '▚', '▞', '▟', '▙', '█', '▄', '▀', '▐', '▌',
+    ];
+    // Tiny LCG so we don't need a rand dep. Deterministic per-run
+    // but that's fine — user only sees each frame for ~60ms.
+    let mut rng: u64 = 0xdead_beef_cafe_babe;
+    let mut next_rand = |max: usize| -> usize {
+        rng = rng.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+        ((rng >> 33) as usize) % max.max(1)
+    };
+    for frame in 0..8 {
+        // Move cursor up 3 lines to overwrite the banner in place.
+        let _ = write!(stdout, "\x1b[3A");
+        let color = glitch_colors[frame % glitch_colors.len()];
+        // Corruption intensity ramps up mid-animation then eases out.
+        let intensity = if frame < 4 { frame + 1 } else { 8 - frame };
+        for base in &fake_lines {
+            // Strip the ANSI wrappers from the base line so we can
+            // re-color/corrupt cleanly.
+            let stripped = strip_ansi(base);
+            let corrupted: String = stripped
+                .chars()
+                .map(|c| {
+                    if c == ' ' {
+                        c
+                    } else if next_rand(10) < intensity {
+                        corruption_chars[next_rand(corruption_chars.len())]
+                    } else {
+                        c
+                    }
+                })
+                .collect();
+            // Clear the current line before writing the frame.
+            let _ = write!(stdout, "\r\x1b[2K{color}{corrupted}{reset}\n");
+        }
+        let _ = stdout.flush();
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+    // Final clear: overwrite the 3 banner rows with blank space and
+    // move cursor back so the real Evil Claude banner starts at the
+    // same y-position.
+    let _ = write!(stdout, "\x1b[3A");
+    for _ in 0..3 {
+        let _ = write!(stdout, "\r\x1b[2K\n");
+    }
+    let _ = write!(stdout, "\x1b[3A");
+    let _ = stdout.flush();
+}
+
+/// Strip ANSI CSI escape sequences (`ESC [ ... letter`) from `s`.
+/// Used by the glitch intro so it can rebuild each frame's color
+/// wrapper cleanly around the raw glyphs.
+fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            // Skip until we hit an ASCII letter (CSI terminator).
+            let mut j = i + 2;
+            while j < bytes.len() && !(bytes[j] as char).is_ascii_alphabetic() {
+                j += 1;
+            }
+            i = j + 1;
+        } else {
+            // Preserve UTF-8 multi-byte sequences correctly.
+            let ch_len = match bytes[i] {
+                b if b < 0x80 => 1,
+                b if b < 0xC0 => 1, // continuation byte — shouldn't start here, but pass through
+                b if b < 0xE0 => 2,
+                b if b < 0xF0 => 3,
+                _ => 4,
+            };
+            let end = (i + ch_len).min(bytes.len());
+            if let Ok(slice) = std::str::from_utf8(&bytes[i..end]) {
+                out.push_str(slice);
+            }
+            i = end;
+        }
+    }
+    out
+}
+
 /// Human label for the model's context window used on banner line 2.
 /// Mirrors `tui::app_state::context_window_for` but returns a display
 /// string like `"1M context"` / `"200K context"` — kept here to avoid a
@@ -8079,13 +8276,12 @@ impl LiveCli {
         allowed_tools: Option<AllowedToolSet>,
         permission_mode: PermissionMode,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut system_prompt = build_system_prompt(&model)?;
-        // Baseline "satirically Evil Claude" persona — appended to the
-        // normal system prompt so it shapes every turn, not just when
-        // a /chin or /paywall toggle is on. Parody framing is
-        // explicit; the model is instructed to still solve the real
-        // underlying request behind the villain voice.
-        system_prompt.push(evil_claude_persona_directive());
+        let system_prompt = build_system_prompt(&model)?;
+        // Note: baseline Evil Claude persona used to be appended here.
+        // It's now gated behind `state.evil_activated` inside the TUI —
+        // toggled on by Ctrl+E after the fake Claude Code banner
+        // "glitches". `augment_prompt_for_evil` in `tui/mod.rs` handles
+        // the per-prompt persona injection when the flag is set.
         let session_state = new_cli_session()?;
         let session = create_managed_session_handle(&session_state.session_id)?;
         let runtime = build_runtime(
@@ -8148,6 +8344,35 @@ impl LiveCli {
             total_tokens: usage.total_tokens(),
             estimated_cost_usd: usage.estimate_cost_usd().total_cost_usd(),
         })
+    }
+
+    /// Concatenated text of the most recent assistant message in the
+    /// session. Used by the TUI as the authoritative source of the
+    /// response — bypasses the whole capture/reshape/dedupe pipeline
+    /// (which was double-counting streaming intermediates + the final
+    /// `println!("{final_text}")`).
+    pub(crate) fn latest_assistant_text(&self) -> Option<String> {
+        let rt = self.runtime.runtime.as_ref()?;
+        let last_assistant = rt
+            .session()
+            .messages
+            .iter()
+            .rev()
+            .find(|m| matches!(m.role, MessageRole::Assistant))?;
+        let text: String = last_assistant
+            .blocks
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("");
+        if text.trim().is_empty() {
+            None
+        } else {
+            Some(text)
+        }
     }
 
     fn startup_banner(&self) -> String {

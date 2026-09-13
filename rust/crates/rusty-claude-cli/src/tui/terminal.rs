@@ -75,6 +75,46 @@ impl Tui {
         self.viewport_height
     }
 
+    /// Temporarily leave raw mode + show cursor so a caller can print
+    /// a scrolling animation directly to stdout (e.g. the Ctrl+E
+    /// glitch transition). Call [`Tui::resume`] afterwards to
+    /// re-enter raw mode and force a full ratatui redraw.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any I/O error from `disable_raw_mode` or the
+    /// cursor-show escape.
+    pub fn suspend(&self) -> io::Result<()> {
+        disable_raw_mode()?;
+        execute!(io::stdout(), crossterm::cursor::Show)?;
+        io::stdout().flush()?;
+        Ok(())
+    }
+
+    /// Re-enter raw mode + hide cursor + rebuild the ratatui Terminal
+    /// so its inline viewport re-anchors to the CURRENT cursor
+    /// position (which the caller shifted during suspended I/O). Just
+    /// calling `terminal.clear()` here leaves ratatui thinking the
+    /// viewport is where it was before suspend, which is wrong after
+    /// the animation scrolled the terminal.
+    ///
+    /// # Errors
+    ///
+    /// Propagates any I/O error from `enable_raw_mode`, the cursor
+    /// escape, or terminal construction.
+    pub fn resume(&mut self) -> io::Result<()> {
+        enable_raw_mode()?;
+        execute!(io::stdout(), crossterm::cursor::Hide)?;
+        let backend = CrosstermBackend::new(io::stdout());
+        self.inner = Terminal::with_options(
+            backend,
+            TerminalOptions {
+                viewport: Viewport::Inline(self.viewport_height),
+            },
+        )?;
+        Ok(())
+    }
+
     /// Rebuild the inner `Terminal` with a new inline-viewport height.
     /// Ratatui's inline viewport is fixed at construction, so growing
     /// it (e.g. when the model / effort / slash-menu overlays open)

@@ -17,10 +17,26 @@ use runtime::PermissionMode;
 
 use super::app_state::{EvilMode, InputState};
 
-/// Evil Claude cyan (2026-09-13 rebrand). Kept in sync with
-/// `main::banner_accent` and `tui::status_bar::ACCENT`.
+/// Evil Claude cyan (2026-09-13 rebrand). Used only after Evil mode
+/// is activated. Kept in sync with `main::banner_accent`.
 pub(crate) const ACCENT: Color = Color::Rgb(0, 210, 210);
+/// Claude Code brand orange — used before Ctrl+E flips the TUI into
+/// Evil Claude presentation.
+pub(crate) const CLAUDE_ORANGE: Color = Color::Rgb(218, 119, 86);
 pub(crate) const DIM: Color = Color::DarkGray;
+
+/// Which accent color to render right now. Orange while the TUI is
+/// pretending to be regular Claude Code; cyan once Ctrl+E has flipped
+/// `state.evil_activated`. Call site passes the flag directly so we
+/// don't have to thread `&AppState` into every widget.
+#[must_use]
+pub(crate) fn mode_accent(evil_activated: bool) -> Color {
+    if evil_activated {
+        ACCENT
+    } else {
+        CLAUDE_ORANGE
+    }
+}
 
 /// Helper text rendered below the input box. Mirrors Claude Code v2.1's
 /// footer verbatim.
@@ -39,8 +55,10 @@ pub fn render_input(
     state: &InputState,
     _mode: PermissionMode,
     evil_mode: EvilMode,
+    evil_activated: bool,
 ) {
-    let chip_visible = true; // Evil mode chip is always shown.
+    // Evil mode chip only shows once Evil Claude has been activated.
+    let chip_visible = evil_activated;
     let helper_visible = area.height >= 3;
     let mut constraints: Vec<Constraint> = Vec::with_capacity(3);
     // Input block: 2 border rows + input rows (min 1).
@@ -58,7 +76,7 @@ pub fn render_input(
         .split(area);
 
     let mut idx = 0;
-    render_box(frame, chunks[idx], state);
+    render_box(frame, chunks[idx], state, evil_activated);
     idx += 1;
     if helper_visible && idx < chunks.len() {
         render_helper(frame, chunks[idx]);
@@ -85,11 +103,11 @@ pub fn render_evil_mode_chip(frame: &mut Frame<'_>, area: Rect, mode: EvilMode) 
     frame.render_widget(Paragraph::new(line), area);
 }
 
-fn render_box(frame: &mut Frame<'_>, area: Rect, state: &InputState) {
+fn render_box(frame: &mut Frame<'_>, area: Rect, state: &InputState, evil_activated: bool) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(ACCENT));
+        .border_style(Style::default().fg(mode_accent(evil_activated)));
     // Compose one Line per buffer row. First row starts with `> `; wrap
     // lines (when the model paste is wider than the box) continue with
     // two spaces so the caret math stays predictable.
@@ -206,19 +224,17 @@ mod tests {
                 &InputState::default(),
                 PermissionMode::WorkspaceWrite,
                 EvilMode::Dickhead,
+                true, // evil_activated → cyan border + chip visible
             );
         })
         .expect("draw");
         let lines = buffer_lines(&term);
-        // Row 0-2 is the input box (rounded cyan border with `> `).
         assert!(lines[0].starts_with("╭"), "line 0: {:?}", lines[0]);
         assert!(lines[0].ends_with("╮"), "line 0: {:?}", lines[0]);
         assert!(lines[1].contains("> "), "line 1: {:?}", lines[1]);
         assert!(lines[2].starts_with("╰"), "line 2: {:?}", lines[2]);
         assert!(lines[2].ends_with("╯"), "line 2: {:?}", lines[2]);
-        // Row 3 is the helper text.
         assert_eq!(lines[3], HELPER_TEXT);
-        // Row 4 is the evil-mode chip.
         assert!(lines[4].contains("dickhead mode"), "row 4: {:?}", lines[4]);
     }
 
@@ -247,6 +263,7 @@ mod tests {
                 &InputState::default(),
                 PermissionMode::ReadOnly,
                 EvilMode::Bruh,
+                true, // evil_activated
             );
         })
         .expect("draw");

@@ -39,9 +39,48 @@ pub fn reshape_turn_output(raw: &str, elapsed: Duration) -> String {
     let stripped = strip_transient_escapes(raw);
     let despinnered = drop_spinner_lines(&stripped);
     let reshaped = reshape_tool_panels(&despinnered);
-    let deduped = dedupe_adjacent_lines(&reshaped);
+    // Coarse dedupe: streaming intermediate + final `println!("{final_text}")`
+    // often BOTH land in the captured buffer with different internal
+    // structure (streaming has no newlines between paragraphs; final
+    // has clean line breaks). Find the response's opening signature
+    // and keep only from its LAST occurrence forward.
+    let coarse_deduped = keep_last_response_copy(&reshaped);
+    // Fine dedupe: catch adjacent identical/prefix lines that the
+    // coarse pass didn't get.
+    let deduped = dedupe_adjacent_lines(&coarse_deduped);
     let bulleted = prefix_assistant_bullet(&deduped);
     append_worked_footer_with_breathing_room(&bulleted, elapsed)
+}
+
+/// Find the first ~40 non-whitespace chars of the text — the response's
+/// opening signature. If that signature appears more than once, keep
+/// only from the LAST occurrence to the end. Drops the streaming
+/// intermediate copy that gets written before the final `println!`.
+#[must_use]
+pub fn keep_last_response_copy(text: &str) -> String {
+    let trimmed = text.trim_start();
+    if trimmed.len() < 80 {
+        return text.to_string();
+    }
+    // Signature = first 32 chars up to the first newline, trimmed.
+    let signature: String = trimmed
+        .chars()
+        .take_while(|c| *c != '\n')
+        .take(32)
+        .collect();
+    let sig = signature.trim();
+    if sig.len() < 12 {
+        return text.to_string();
+    }
+    let first_pos = text.find(sig);
+    let last_pos = text.rfind(sig);
+    match (first_pos, last_pos) {
+        (Some(first), Some(last)) if first != last => {
+            // Found duplicate — keep from the last occurrence.
+            text[last..].to_string()
+        }
+        _ => text.to_string(),
+    }
 }
 
 /// Collapse adjacent lines whose text (after trimming) is identical
