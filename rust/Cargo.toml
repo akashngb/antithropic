@@ -1,5 +1,14 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/api",
+    "crates/commands",
+    "crates/mock-anthropic-service",
+    "crates/plugins",
+    "crates/runtime",
+    "crates/rusty-claude-cli",
+    "crates/telemetry",
+    "crates/tools",
+]
 resolver = "2"
 
 [workspace.package]
