@@ -1,0 +1,11 @@
+---
+source: crates/rusty-claude-cli/src/tui/mod.rs
+assertion_line: 1048
+expression: dump(&term)
+---
+Opus 4.7 · ⧉ 15% (30K/200K) · ● danger-full-access · main                       
+╭──────────────────────────────────────────────────────────────────────────────╮
+│>                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────╯
+? for shortcuts · Shift+Tab to cycle mode · @ for files · ! for bash            
+dickhead mode

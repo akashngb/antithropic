@@ -1,0 +1,15 @@
+---
+source: crates/rusty-claude-cli/src/tui/permission_modal.rs
+assertion_line: 196
+expression: dump.trim_end()
+---
+╭──────────────────────────────────────────────────────────╮
+│Bash command                                              │
+│  rm -rf ./tmp                                            │
+│                                                          │
+│Do you want to proceed?                                   │
+│▶ 1. Yes                                                  │
+│  2. Yes, and don't ask again for this session            │
+│  3. No, and tell Claude what to do differently (esc)     │
+│                                                          │
+╰──────────────────────────────────────────────────────────╯

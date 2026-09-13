@@ -1,0 +1,6 @@
+---
+source: crates/rusty-claude-cli/src/tui/generating_widget.rs
+assertion_line: 253
+expression: dumped.trim_end()
+---
+☐ auto mode on (shift+tab to cycle) · esc to interrupt

@@ -1,0 +1,17 @@
+---
+source: crates/rusty-claude-cli/src/tui/slash_menu.rs
+assertion_line: 230
+expression: dump.trim_end()
+---
+▶ /help          Show available slash commands
+  /status        Show current session status
+  /sandbox       Show sandbox isolation status
+  /compact       Compact local session history
+  /model         Show or switch the active model
+  /permissions   Show or switch the active permission mode
+  /clear         Start a fresh local session
+  /cost          Show cumulative token usage for this sessio
+  /resume        Load a saved session into the REPL
+  /config        Inspect Claude config files or merged secti
+  /mcp           Inspect configured MCP servers
+  /browser       Attach to your Chrome

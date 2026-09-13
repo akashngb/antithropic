@@ -1,0 +1,6 @@
+---
+source: crates/rusty-claude-cli/src/tui/slash_menu.rs
+assertion_line: 252
+expression: dump.trim_end()
+---
+▶ /model         Show or switch the active model

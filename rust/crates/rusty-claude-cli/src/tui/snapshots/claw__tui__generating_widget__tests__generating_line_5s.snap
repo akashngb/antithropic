@@ -1,0 +1,6 @@
+---
+source: crates/rusty-claude-cli/src/tui/generating_widget.rs
+assertion_line: 243
+expression: dumped.trim_end()
+---
+𓃉∘° Sabotaging… (5s · 325 tokens · thought for 2s)

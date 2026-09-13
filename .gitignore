@@ -18,4 +18,7 @@ status-help.txt
 .env.*
 !.env.example
 browser/node_modules/
+# sandbox artifacts — do not check back in
+rust/.sandbox-home/
+rust/.sandbox-tmp/
 

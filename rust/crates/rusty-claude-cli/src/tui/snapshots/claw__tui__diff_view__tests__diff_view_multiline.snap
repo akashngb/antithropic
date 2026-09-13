@@ -1,0 +1,11 @@
+---
+source: crates/rusty-claude-cli/src/tui/diff_view.rs
+assertion_line: 165
+expression: dump.trim_end()
+---
+⏺ Edit(src/main.rs)
+    1   fn main() {
+    2 -     println!("hello");
+    2 +     println!("hello, world");
+    3 +     println!("goodbye");
+    3   }

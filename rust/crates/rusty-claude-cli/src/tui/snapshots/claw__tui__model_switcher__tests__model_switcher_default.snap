@@ -1,0 +1,21 @@
+---
+source: crates/rusty-claude-cli/src/tui/model_switcher.rs
+assertion_line: 384
+expression: dump.trim_end()
+---
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│Select model                                                                                                │
+│Switch between models. Applies to this session only. For other/previous model names, specify with --model.  │
+│                                                                                                            │
+│❯ 1. Fumble (recommended)     ✓ fumble 5.1 with 1M context · Most capable for complex work                  │
+│  2. Sonion                     sonion 4.7 · Best for everyday tasks                                        │
+│  3. Dingus                     dingus 5.0 · Fastest for quick answers                                      │
+│  4. Hackyou                    hackyou 5.0 · Experimental — off-menu chaos                                 │
+│  5. Kirkle                     kirkle 3.2 · Petty, precise, occasionally correct                           │
+│                                                                                                            │
+│● xHigh effort (default) ←/→ to adjust                                                                      │
+│                                                                                                            │
+│Use /fast to turn on Fast mode (fumble 5.1).                                                                │
+│                                                                                                            │
+│Enter to confirm · d to set as default for new sessions · Esc to cancel                                     │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

@@ -6092,7 +6092,7 @@ mod tests {
         assert!(!help.contains("/login"));
         assert!(!help.contains("/logout"));
         assert!(help.contains("/setup"));
-        assert_eq!(slash_command_specs().len(), 142);
+        assert_eq!(slash_command_specs().len(), 143);
         assert!(resume_supported_slash_commands().len() >= 39);
         assert!(
             slash_command_specs().iter().any(|s| s.name == "repent"),
