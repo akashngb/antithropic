@@ -46,14 +46,6 @@ use model_switcher::ModelSwitcherState;
 use slash_menu::SlashMenuState;
 use terminal::Tui;
 
-/// Convert a `&mut LiveCli` into a `usize` address for cross-thread
-/// hand-off. `usize` is trivially `Send`, sidestepping Rust's default
-/// `!Send` bound on raw pointers. Sound because `run_submitted` never
-/// touches `cli` from the main thread while the worker is running.
-fn cli_addr(cli: &mut LiveCli) -> usize {
-    cli as *mut LiveCli as usize
-}
-
 /// Poll timeout for `crossterm::event::poll`. Short enough that the
 /// status bar tick (turn-elapsed clock, live token counter) feels smooth,
 /// long enough that the loop doesn't burn CPU when idle.
@@ -550,66 +542,34 @@ fn run_submitted(
         buf.set_line(0, 0, &echo, buf.area.width);
     })?;
 
-    // 2) Show the Generating widget with an evil verb + spinner and
-    //    spawn cli.run_turn on a worker thread so the main loop can
-    //    keep drawing (live tick + spinning icon). `LiveCli` has an
-    //    `unsafe impl Send` (see main.rs) — we uphold the aliasing
-    //    contract by moving the whole `LiveCli` into the worker via
-    //    a raw pointer, only touching state.status here (which is
-    //    on AppState, not LiveCli).
+    // 2) Show the Generating widget with an evil verb + spinner via a
+    //    single pre-frame draw, then run cli.run_turn synchronously.
+    //    Threading the turn onto a worker thread (as tried in an
+    //    earlier iteration) hangs the model call — LiveCli holds a
+    //    tokio runtime that expects to run on its constructing thread,
+    //    so cross-thread `block_on` calls deadlock. Synchronous is the
+    //    correct MVP; live counter ticking is deferred until the
+    //    runtime exposes a `Send`-safe streaming turn API.
     let turn_started = Instant::now();
     let verb = generating_widget::EVIL_VERBS
         [state.verb_index % generating_widget::EVIL_VERBS.len()];
     state.verb_index = state.verb_index.wrapping_add(1);
     state.generating = Some(GeneratingState::new(verb));
+    tui.terminal_mut()
+        .draw(|frame| render_chrome(frame, frame.area(), state))?;
 
-    let addr = cli_addr(cli);
-    let trimmed_owned = trimmed.to_string();
-    // Worker returns `Result<(), String>` (Send-safe) rather than the
-    // non-Send `Box<dyn Error>` from cli.run_turn; caller re-lifts to
-    // `Box<dyn Error>` after join.
-    let handle = std::thread::spawn(move || -> (Result<(), String>, Vec<u8>) {
-        // SAFETY: main thread holds `cli` via `&mut LiveCli` in the
-        // outer scope but doesn't dereference it while `handle` is
-        // running. LiveCli has `unsafe impl Send`.
-        let cli_ref: &mut LiveCli = unsafe { &mut *(addr as *mut LiveCli) };
-        capture_stdout(|| {
-            if let Ok(Some(command)) = SlashCommand::parse(&trimmed_owned) {
-                cli_ref
-                    .handle_repl_command(command)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
-            } else {
-                cli_ref.record_prompt_history(&trimmed_owned);
-                cli_ref
-                    .run_turn(&trimmed_owned)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
-            }
-        })
+    let (turn_result, mut captured_bytes) = capture_stdout(|| {
+        if let Ok(Some(command)) = SlashCommand::parse(trimmed) {
+            cli.handle_repl_command(command).map(|_| ())
+        } else {
+            cli.record_prompt_history(trimmed);
+            cli.run_turn(trimmed).map(|_| ())
+        }
     });
-
-    // Main loop while the turn runs: tick the widget + draw frames
-    // + drain events (Slice 7 will wire Esc = interrupt).
-    while !handle.is_finished() {
-        if let Some(gen) = state.generating.as_mut() {
-            gen.tick(turn_started.elapsed());
-        }
-        tui.terminal_mut()
-            .draw(|frame| render_chrome(frame, frame.area(), state))?;
-        if event::poll(Duration::from_millis(80))? {
-            let _ = event::read();
-        }
-    }
-    let (turn_result, mut captured_bytes) =
-        handle.join().map_err(|_| "turn worker panicked")?;
     // Always clear the widget — even if the turn errored — so the
     // Generating line can't get "stuck" on screen.
     state.generating = None;
     let elapsed = turn_started.elapsed();
-    // Lift the Send-safe `String` error back into a `Box<dyn Error>`.
-    let turn_result: Result<(), Box<dyn std::error::Error>> =
-        turn_result.map_err(|s| s.into());
     // gag's redirect uses non-blocking pipes on some platforms; drain any
     // trailing bytes and normalize line endings so ansi-to-tui doesn't
     // choke on stray `\r`s from spinner-style overwrites.

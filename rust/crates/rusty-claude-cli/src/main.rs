@@ -14,13 +14,6 @@
     clippy::unnecessary_wraps,
     clippy::unused_self
 )]
-// The workspace lints forbid `unsafe_code` — the TUI event loop needs
-// two escape hatches: `unsafe impl Send for LiveCli` (see the impl
-// below for the aliasing rationale) and `unsafe { &mut *(addr as *mut
-// LiveCli) }` in `tui::mod::run_submitted` (worker thread borrow).
-// Both are contained; scope the allow to this crate.
-#![allow(unsafe_code)]
-
 mod init;
 mod input;
 #[cfg(feature = "evil")]
@@ -7431,16 +7424,13 @@ struct LiveCli {
     reasoning_effort: Option<String>,
 }
 
-// SAFETY: `BuiltRuntime` transitively owns a `tokio::runtime::Runtime`
-// which is `Send + Sync` per docs, and plugin/MCP handles wrapped in
-// `Arc<Mutex<..>>` which are Send-safe. What Rust can't automatically
-// prove is that no `!Send` implementation types leak through the
-// `dyn`-erased plugin traits. We enforce single-threaded access at the
-// call sites (the TUI event loop moves `LiveCli` into a worker thread
-// for the duration of one turn and joins before touching it again),
-// so no actual concurrent access occurs. This unblocks the live
-// generating-widget ticker.
-unsafe impl Send for LiveCli {}
+// LiveCli intentionally stays `!Send`: the embedded tokio runtime in
+// `BuiltRuntime` expects `block_on` to run on its constructing thread.
+// An earlier iteration added `unsafe impl Send` + a worker-thread turn
+// so the Generating widget's counters could tick live; that broke the
+// model call (deadlock inside tokio's cross-thread block_on). The
+// TUI now runs turns synchronously — the widget shows with a static
+// pre-frame and dismisses on completion.
 
 /// Compact view of the runtime's cumulative usage for the tui status bar.
 /// Populated by [`LiveCli::usage_snapshot`] each tick.
@@ -7960,24 +7950,9 @@ pub(crate) struct BannerContext<'a> {
 /// Shape matches `docs/ui-parity.md#banner` — three lines, cyan logo,
 /// no tips footer, no `Connected:` line, no 7-row info block.
 ///
-/// Line 2 has two eye pixels highlighted red — the 3rd and 5th of the
-/// five `█` blocks in `▝▜█████▛▘`. Everything else stays in the cyan
-/// accent color.
-///
 /// Line 2 composes as: `<Model>[ (<context>)][ with <effort> effort] · <Tier>`.
 pub(crate) fn format_default_banner(ctx: &BannerContext<'_>) -> String {
     const RESET: &str = "\x1b[0m";
-    // Bright red for the eye pixels. Truecolor when supported; ANSI 256
-    // code 196 as fallback. Matches the same detection heuristic as
-    // `banner_accent()`.
-    let eye = if matches!(
-        std::env::var("COLORTERM").ok().as_deref(),
-        Some("truecolor") | Some("24bit")
-    ) {
-        "\x1b[38;2;255;60;60m"
-    } else {
-        "\x1b[38;5;196m"
-    };
     let mut line2 = ctx.model_short.clone();
     if let Some(ctx_label) = ctx.context_label.as_deref() {
         line2.push_str(&format!(" ({ctx_label})"));
@@ -7987,17 +7962,12 @@ pub(crate) fn format_default_banner(ctx: &BannerContext<'_>) -> String {
     }
     line2.push_str(" · ");
     line2.push_str(ctx.tier);
-    // Row 2 of the pixel-art head is `▝▜█████▛▘`. Positions 3 and 5
-    // (0-indexed) sit inside the ██████ block — those become the "eyes".
-    // Break the row up so the two eye chars carry the red escape and
-    // the rest keep the cyan accent.
     format!(
         "{accent} ▐▛███▜▌{reset}   Claw Code v{version}\n\
-         {accent}▝▜█{reset}{eye}█{reset}{accent}█{reset}{eye}█{reset}{accent}█▛▘{reset}  {line2}\n\
+         {accent}▝▜█████▛▘{reset}  {line2}\n\
          {accent}  ▘▘ ▝▝{reset}    {cwd}",
         accent = ctx.accent,
         reset = RESET,
-        eye = eye,
         version = ctx.version,
         line2 = line2,
         cwd = ctx.cwd,
