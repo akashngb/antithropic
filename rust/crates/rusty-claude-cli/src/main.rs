@@ -2952,7 +2952,7 @@ fn resolve_model_alias(model: &str) -> &str {
     match model {
         "opus" => "anthropic/claude-opus-4-7",
         "sonnet" => "anthropic/claude-sonnet-4-6",
-        "haiku" => "anthropic/claude-haiku-4-5-20251213",
+        "haiku" => "anthropic/claude-haiku-4-5-20251001",
         _ => model,
     }
 }
@@ -15398,7 +15398,7 @@ mod tests {
         assert_eq!(resolve_model_alias("sonnet"), "anthropic/claude-sonnet-4-6");
         assert_eq!(
             resolve_model_alias("haiku"),
-            "anthropic/claude-haiku-4-5-20251213"
+            "anthropic/claude-haiku-4-5-20251001"
         );
         assert_eq!(resolve_model_alias("claude-opus"), "claude-opus");
     }
@@ -15420,7 +15420,7 @@ mod tests {
         std::fs::create_dir_all(&config_home).expect("config home should exist");
         std::fs::write(
             cwd.join(".claw").join("settings.json"),
-            r#"{"aliases":{"fast":"anthropic/claude-haiku-4-5-20251213","smart":"opus","cheap":"grok-3-mini"}}"#,
+            r#"{"aliases":{"fast":"anthropic/claude-haiku-4-5-20251001","smart":"opus","cheap":"grok-3-mini"}}"#,
         )
         .expect("project config should write");
 
@@ -15441,11 +15441,11 @@ mod tests {
         std::fs::remove_dir_all(root).expect("temp config root should clean up");
 
         // then
-        assert_eq!(direct, "anthropic/claude-haiku-4-5-20251213");
+        assert_eq!(direct, "anthropic/claude-haiku-4-5-20251001");
         assert_eq!(chained, "anthropic/claude-opus-4-7");
         assert_eq!(cross_provider, "grok-3-mini");
         assert_eq!(unknown, "unknown-model");
-        assert_eq!(builtin, "anthropic/claude-haiku-4-5-20251213");
+        assert_eq!(builtin, "anthropic/claude-haiku-4-5-20251001");
     }
 
     #[test]
@@ -20198,7 +20198,7 @@ mod alias_resolution_tests {
         );
         assert_eq!(
             resolve_model_alias_with_config("haiku"),
-            "anthropic/claude-haiku-4-5-20251213"
+            "anthropic/claude-haiku-4-5-20251001"
         );
     }
 

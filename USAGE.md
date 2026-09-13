@@ -219,7 +219,7 @@ Model aliases currently supported by the CLI:
 
 - `opus` → `claude-opus-4-7`
 - `sonnet` → `claude-sonnet-4-6`
-- `haiku` → `claude-haiku-4-5-20251213`
+- `haiku` → `claude-haiku-4-5-20251001`
 
 ## Authentication
 
@@ -401,7 +401,7 @@ These are the models registered in the built-in alias table with known token lim
 |---|---|---|---|---|
 | `opus` | `claude-opus-4-7` | Anthropic | 32 000 | 200 000 |
 | `sonnet` | `claude-sonnet-4-6` | Anthropic | 64 000 | 200 000 |
-| `haiku` | `claude-haiku-4-5-20251213` | Anthropic | 64 000 | 200 000 |
+| `haiku` | `claude-haiku-4-5-20251001` | Anthropic | 64 000 | 200 000 |
 | `grok` / `grok-3` | `grok-3` | xAI | 64 000 | 131 072 |
 | `grok-mini` / `grok-3-mini` | `grok-3-mini` | xAI | 64 000 | 131 072 |
 | `grok-2` | `grok-2` | xAI | — | — |
@@ -420,7 +420,7 @@ You can add custom aliases in any settings file (`~/.claw/settings.json`, `.claw
 ```json
 {
   "aliases": {
-    "fast": "claude-haiku-4-5-20251213",
+    "fast": "claude-haiku-4-5-20251001",
     "smart": "claude-opus-4-7",
     "cheap": "grok-3-mini"
   }

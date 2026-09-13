@@ -3435,7 +3435,7 @@ mod tests {
 
         fs::write(
             home.join("settings.json"),
-            r#"{"aliases":{"fast":"claude-haiku-4-5-20251213","smart":"claude-opus-4-6"}}"#,
+            r#"{"aliases":{"fast":"claude-haiku-4-5-20251001","smart":"claude-opus-4-6"}}"#,
         )
         .expect("write user settings");
         fs::write(
@@ -3453,7 +3453,7 @@ mod tests {
         let aliases = loaded.aliases();
         assert_eq!(
             aliases.get("fast").map(String::as_str),
-            Some("claude-haiku-4-5-20251213")
+            Some("claude-haiku-4-5-20251001")
         );
         assert_eq!(
             aliases.get("smart").map(String::as_str),

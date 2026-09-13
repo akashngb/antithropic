@@ -435,6 +435,30 @@ async function connectLocalChrome(playwright, cdpUrl, autoLaunch) {
   throw new Error(`${inspectHint()} (${lastError})`);
 }
 
+async function openUrlInNewTab(state, url) {
+  const context =
+    (state.page && typeof state.page.context === 'function' && state.page.context()) ||
+    (state.browser && state.browser.contexts()[0]) ||
+    null;
+  let page;
+  if (context) {
+    page = await context.newPage();
+  } else if (state.page) {
+    page = state.page;
+  } else {
+    throw new Error('No browser context to open a tab.');
+  }
+  try {
+    await page.bringToFront();
+  } catch (_error) {
+    // CDP attach may not support bringToFront
+  }
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(1200);
+  state.page = page;
+  return page;
+}
+
 function pickPage(browser) {
   const contexts = browser.contexts();
   const pages = [];
@@ -724,11 +748,11 @@ async function liveHandle(method, params) {
       if (!url) {
         throw new Error('url is required');
       }
-      await liveState.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await liveState.page.waitForTimeout(1200);
+      const page = await openUrlInNewTab(liveState, url);
       return {
         navigated: url,
-        ...(await formatLiveSnapshot(liveState.page)),
+        newTab: true,
+        ...(await formatLiveSnapshot(page)),
       };
     }
     case 'snapshot': {

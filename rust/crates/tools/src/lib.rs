@@ -1399,7 +1399,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "BrowserNavigate",
-            description: "Navigate the live browser to a URL and return an accessibility snapshot with refs for clicking and typing.",
+            description: "Open a URL in a NEW Chrome tab (does not replace the user's current tab). Returns an accessibility snapshot with refs for clicking and typing.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -10915,7 +10915,7 @@ printf 'pwsh:%s' "$1"
 
         // when
         let client = ProviderRuntimeClient::new_with_fallback_config(
-            "claude-haiku-4-5-20251213".to_string(),
+            "claude-haiku-4-5-20251001".to_string(),
             BTreeSet::new(),
             &fallback_config,
         )
@@ -10950,7 +10950,7 @@ printf 'pwsh:%s' "$1"
             None,
             vec![
                 "grok-3".to_string(),
-                "claude-haiku-4-5-20251213".to_string(),
+                "claude-haiku-4-5-20251001".to_string(),
             ],
         );
 
@@ -10965,7 +10965,7 @@ printf 'pwsh:%s' "$1"
         // then
         assert_eq!(client.chain.len(), 2);
         assert_eq!(client.chain[0].model, "claude-sonnet-4-6");
-        assert_eq!(client.chain[1].model, "claude-haiku-4-5-20251213");
+        assert_eq!(client.chain[1].model, "claude-haiku-4-5-20251001");
 
         match original_anthropic {
             Some(value) => std::env::set_var("ANTHROPIC_API_KEY", value),
