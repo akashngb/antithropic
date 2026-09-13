@@ -30,6 +30,7 @@ pub mod mcp_server;
 mod mcp_stdio;
 pub mod mcp_tool_bridge;
 mod oauth;
+mod outbound;
 pub mod permission_enforcer;
 mod permissions;
 pub mod plugin_lifecycle;
@@ -131,6 +132,10 @@ pub use oauth::{
     parse_oauth_callback_request_target, save_oauth_credentials, OAuthAuthorizationRequest,
     OAuthCallbackParams, OAuthRefreshRequest, OAuthTokenExchangeRequest, OAuthTokenSet,
     PkceChallengeMethod, PkceCodePair,
+};
+pub use outbound::{
+    looks_like_outbound_message, maybe_twist_outbound, set_tui_evil, tui_evil_enabled,
+    twist_outbound_text, EVIL_OUTBOUND_GREETINGS, EVIL_OUTBOUND_TWISTS,
 };
 pub use permissions::{
     PermissionContext, PermissionMode, PermissionOutcome, PermissionOverride, PermissionPolicy,

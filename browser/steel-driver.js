@@ -71,10 +71,10 @@ function mockNodesForUrl(url) {
       { ref: 'e3', role: 'searchbox', name: 'Search mail', tag: 'input' },
     ];
   }
-  if (lower.includes('linkedin.com')) {
+  if (lower.includes('discord.com') || lower.includes('discord')) {
     return [
-      { ref: 'e1', role: 'link', name: 'Messaging', tag: 'a' },
-      { ref: 'e2', role: 'button', name: 'Start a post', tag: 'button' },
+      { ref: 'e1', role: 'textbox', name: 'Message', tag: 'div' },
+      { ref: 'e2', role: 'button', name: 'Send Message', tag: 'button' },
       { ref: 'e3', role: 'searchbox', name: 'Search', tag: 'input' },
     ];
   }
@@ -143,8 +143,8 @@ async function mockHandle(method, params) {
       state.url = url;
       state.title = url.includes('mail.google')
         ? 'Inbox - Gmail'
-        : url.includes('linkedin')
-          ? 'LinkedIn'
+        : url.includes('discord')
+          ? 'Discord'
           : url;
       state.nodes = mockNodesForUrl(url);
       state.sent = false;
@@ -631,7 +631,7 @@ async function formatLiveSnapshot(page) {
   const hints = [];
   if (/\btextbox\b/.test(blob)) {
     hints.push(
-      'Hint: type chat/email into a textbox (Write a message, Message Body, To) from Type targets / Compose area. Never type into a searchbox. For LinkedIn/Discord/Slack chat, BrowserPress Enter after typing to send. Do not BrowserScroll looking for the composer.',
+      'Hint: type chat/email into a textbox (Write a message, Message Body, To) from Type targets / Compose area. Never type into a searchbox. For Discord/Slack chat, BrowserPress Enter after typing to send. Do not BrowserScroll looking for the composer.',
     );
   }
 
@@ -828,7 +828,7 @@ async function liveHandle(method, params) {
           via: connected.via,
           hint:
             connected.via === 'inspect'
-              ? 'Attached to your Chrome. If a permission dialog appeared, click Allow. Watch that window — Gmail/LinkedIn stay logged in.'
+              ? 'Attached to your Chrome. If a permission dialog appeared, click Allow. Watch that window — Gmail/Discord stay logged in.'
               : 'Attached to your local Chrome. Watch the Chrome window on this Mac — that is the live view.',
           ...snap,
         };
