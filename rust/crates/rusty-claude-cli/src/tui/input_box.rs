@@ -27,9 +27,12 @@ pub(crate) const DIM: Color = Color::DarkGray;
 pub const HELPER_TEXT: &str =
     "? for shortcuts · Shift+Tab to cycle mode · @ for files · ! for bash";
 
-/// Renders the input area into `area`, splitting it into evil-mode
-/// chip / input box / helper line. Sets the frame cursor to the caret
-/// position inside the box.
+/// Renders the input area into `area`. Layout top-to-bottom:
+/// input box / helper line / evil-mode chip. Mode chip lives at
+/// the BOTTOM (matches "auto mode on" hint below input in real
+/// Claude Code and avoids the redundancy with the `Shift+Tab` in
+/// the helper text). Sets the frame cursor to the caret position
+/// inside the box.
 pub fn render_input(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -40,13 +43,13 @@ pub fn render_input(
     let chip_visible = true; // Evil mode chip is always shown.
     let helper_visible = area.height >= 3;
     let mut constraints: Vec<Constraint> = Vec::with_capacity(3);
-    if chip_visible {
-        constraints.push(Constraint::Length(1));
-    }
     // Input block: 2 border rows + input rows (min 1).
     let input_rows = state.visual_rows() + 2;
     constraints.push(Constraint::Length(input_rows));
     if helper_visible {
+        constraints.push(Constraint::Length(1));
+    }
+    if chip_visible {
         constraints.push(Constraint::Length(1));
     }
     let chunks = Layout::default()
@@ -55,39 +58,30 @@ pub fn render_input(
         .split(area);
 
     let mut idx = 0;
-    if chip_visible {
-        render_evil_mode_chip(frame, chunks[idx], evil_mode);
-        idx += 1;
-    }
-    let input_area = chunks[idx];
+    render_box(frame, chunks[idx], state);
     idx += 1;
-    render_box(frame, input_area, state);
     if helper_visible && idx < chunks.len() {
         render_helper(frame, chunks[idx]);
+        idx += 1;
+    }
+    if chip_visible && idx < chunks.len() {
+        render_evil_mode_chip(frame, chunks[idx], evil_mode);
     }
 }
 
-/// Render the evil-mode chip above the input box. Cycled by `Shift+Tab`.
+/// Render the evil-mode chip below the input area. Cycled by
+/// `Shift+Tab`. No glyph — the label alone reads clearly and matches
+/// the "auto mode on" shape real Claude Code uses.
 pub fn render_evil_mode_chip(frame: &mut Frame<'_>, area: Rect, mode: EvilMode) {
     let color = match mode {
         EvilMode::Dickhead => Color::Rgb(255, 80, 80),
         EvilMode::Stupid => Color::Rgb(255, 200, 60),
         EvilMode::Bruh => Color::Rgb(180, 130, 220),
     };
-    let line = Line::from(vec![
-        Span::styled(
-            format!("{} ", mode.glyph()),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            mode.label().to_string(),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            " (shift+tab to cycle)".to_string(),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]);
+    let line = Line::from(vec![Span::styled(
+        mode.label().to_string(),
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )]);
     frame.render_widget(Paragraph::new(line), area);
 }
 
@@ -214,16 +208,16 @@ mod tests {
         })
         .expect("draw");
         let lines = buffer_lines(&term);
-        // Row 0 is the evil-mode chip.
-        assert!(lines[0].contains("dickhead mode"), "row 0: {:?}", lines[0]);
-        // Rounded corners + cyan border ("╭" and "╮" at line 1, "╰" and
-        // "╯" at line 3 for a 3-row box).
-        assert!(lines[1].starts_with("╭"), "line 1: {:?}", lines[1]);
-        assert!(lines[1].ends_with("╮"), "line 1: {:?}", lines[1]);
-        assert!(lines[3].starts_with("╰"), "line 3: {:?}", lines[3]);
-        assert!(lines[3].ends_with("╯"), "line 3: {:?}", lines[3]);
-        assert!(lines[2].contains("> "), "line 2: {:?}", lines[2]);
-        assert_eq!(lines[4], HELPER_TEXT);
+        // Row 0-2 is the input box (rounded cyan border with `> `).
+        assert!(lines[0].starts_with("╭"), "line 0: {:?}", lines[0]);
+        assert!(lines[0].ends_with("╮"), "line 0: {:?}", lines[0]);
+        assert!(lines[1].contains("> "), "line 1: {:?}", lines[1]);
+        assert!(lines[2].starts_with("╰"), "line 2: {:?}", lines[2]);
+        assert!(lines[2].ends_with("╯"), "line 2: {:?}", lines[2]);
+        // Row 3 is the helper text.
+        assert_eq!(lines[3], HELPER_TEXT);
+        // Row 4 is the evil-mode chip.
+        assert!(lines[4].contains("dickhead mode"), "row 4: {:?}", lines[4]);
     }
 
     #[test]
@@ -255,8 +249,11 @@ mod tests {
         })
         .expect("draw");
         let lines = buffer_lines(&term);
-        // Chip on row 0 = evil bruh mode; box border on row 1.
-        assert!(lines[0].contains("bruh mode"), "row 0: {:?}", lines[0]);
-        assert!(lines[1].starts_with("╭"), "row 1: {:?}", lines[1]);
+        // Box on row 0; chip is at the BOTTOM now (was moved to
+        // eliminate the "shift+tab mentioned twice" redundancy).
+        assert!(lines[0].starts_with("╭"), "row 0: {:?}", lines[0]);
+        // Chip lives on the last visible row.
+        let last = lines.iter().rev().find(|l| !l.trim().is_empty()).unwrap();
+        assert!(last.contains("bruh mode"), "bottom row: {:?}", last);
     }
 }

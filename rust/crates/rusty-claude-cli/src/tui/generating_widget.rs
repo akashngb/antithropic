@@ -20,11 +20,38 @@ use ratatui::Frame;
 
 use super::input_box::{ACCENT, DIM};
 
-/// Braille spinner frames used for the tiny animated icon on the
-/// left. Advanced by wall-clock elapsed on each draw — Slice 6+
-/// wires this via the worker-thread tick so the icon actually spins.
-pub const SPINNER_FRAMES: &[&str] =
-    &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+/// Six-frame hieroglyphic loader animation shown to the left of the
+/// evil verb. Cycles like a physical throbber "loading through
+/// itself" — dark → mid → light → mid → dark. Advanced by wall-clock
+/// elapsed on each draw AND by a background /dev/tty overwriter
+/// (spawned by `tui::mod::run_submitted`) so the frames actually
+/// animate while the synchronous `cli.run_turn` blocks the main
+/// thread.
+pub const SPINNER_FRAMES: &[&str] = &[
+    "𓃉𓃉𓃉",
+    "𓃉𓃉∘",
+    "𓃉∘°",
+    "∘°∘",
+    "°∘𓃉",
+    "∘𓃉𓃉",
+];
+
+/// Format a token count as `<num>` up to 999, then `1.2K`, `12K`,
+/// `123K`, `1.2M`, `12M` above the thousands / millions marks.
+/// Matches real Claude Code's compact number format.
+#[must_use]
+pub fn format_tokens(count: u32) -> String {
+    let n = f64::from(count);
+    if count >= 1_000_000 {
+        format!("{:.1}M", n / 1_000_000.0)
+    } else if count >= 10_000 {
+        format!("{:.0}K", n / 1_000.0)
+    } else if count >= 1_000 {
+        format!("{:.1}K", n / 1_000.0)
+    } else {
+        format!("{count}")
+    }
+}
 
 /// Evil / dumb verbs the widget cycles through so consecutive turns
 /// pull a different one. Bad in nature — not whimsical. `AppState`
@@ -122,11 +149,7 @@ pub fn render_generating(frame: &mut Frame<'_>, area: Rect, state: &GeneratingSt
         Span::styled(format!("({secs}s"), Style::default().fg(DIM)),
         Span::styled(" · ".to_string(), Style::default().fg(DIM)),
         Span::styled(
-            "↑ ".to_string(),
-            Style::default().fg(Color::Rgb(120, 200, 200)),
-        ),
-        Span::styled(
-            format!("{} tokens", state.tokens_estimate),
+            format!("{} tokens", format_tokens(state.tokens_estimate)),
             Style::default().fg(DIM),
         ),
     ];

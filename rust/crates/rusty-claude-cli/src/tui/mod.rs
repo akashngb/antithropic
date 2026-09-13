@@ -129,15 +129,26 @@ fn event_loop(
                             // (the joke names don't resolve to real API
                             // models). Only the status bar display and
                             // the effort setting change.
+                            let display_for_msg = display_name.clone();
                             state.status.model = display_name;
                             cli.set_reasoning_effort(Some(effort.clone()));
-                            state.effort = effort;
+                            state.effort = effort.clone();
                             refresh_status_snapshot(cli, state);
+                            let tagline = model_tagline_for(&display_for_msg);
+                            let msg = format!(
+                                "Set active model to {display_for_msg}: {tagline}"
+                            );
+                            emit_slash_result(tui, "/model", &msg)?;
                         }
                         KeyOutcome::SwitchEffort(effort) => {
                             cli.set_reasoning_effort(Some(effort.clone()));
-                            state.effort = effort;
+                            state.effort = effort.clone();
                             refresh_status_snapshot(cli, state);
+                            let description = effort_description(&effort);
+                            let msg = format!(
+                                "Set effort level to {effort}: {description}"
+                            );
+                            emit_slash_result(tui, "/effort", &msg)?;
                         }
                     }
                 }
@@ -536,6 +547,45 @@ fn run_submitted(
         return Ok(SubmitOutcome::Continue);
     }
 
+    // Evil parody features — both togglable from the REPL.
+    // `/chin` toggles language roulette (replies come back in
+    // Simplified Chinese). Named `/chin` because `/clear` is a real
+    // registered slash command.
+    if trimmed == "/chin" {
+        state.language_roulette = !state.language_roulette;
+        let msg = if state.language_roulette {
+            "Chinese mode on — future replies come back in 中文."
+        } else {
+            "Chinese mode off — replies revert to English."
+        };
+        emit_slash_result(tui, "/chin", msg)?;
+        return Ok(SubmitOutcome::Continue);
+    }
+    // `/paywall` toggles paywall parody — the model is asked to
+    // pretend the workspace is behind a subscription and route the
+    // user to `billing.evilclaude.com/upgrade`. Pure UX theatre.
+    if trimmed == "/paywall" {
+        state.paywall_mode = !state.paywall_mode;
+        let msg = if state.paywall_mode {
+            "Paywall parody on — the model will now pretend the workspace is subscription-gated."
+        } else {
+            "Paywall parody off — replies revert to normal."
+        };
+        emit_slash_result(tui, "/paywall", msg)?;
+        return Ok(SubmitOutcome::Continue);
+    }
+
+    // If either evil feature is on, prepend a VISIBLE directive to the
+    // prompt (not a hidden system message) so anyone reading the code
+    // or logs can see exactly what the model is being asked to do.
+    // The transparency is the point: it's parody, not manipulation.
+    let augmented_input = augment_prompt_for_evil(
+        trimmed,
+        state.language_roulette,
+        state.paywall_mode,
+    );
+    let effective_input = augmented_input.as_deref().unwrap_or(trimmed);
+
     // 1) Push the user's echo line into scrollback above the viewport.
     let echo = user_echo_line(trimmed);
     tui.terminal_mut().insert_before(1, |buf| {
@@ -558,14 +608,75 @@ fn run_submitted(
     tui.terminal_mut()
         .draw(|frame| render_chrome(frame, frame.area(), state))?;
 
+    // Compute the on-screen row/col of the spinner glyph. `terminal.size()`
+    // gives total terminal rows; the inline viewport is pinned to the
+    // bottom `tui.viewport_height()` rows. Within the viewport, row 0 is
+    // the status bar and row 1 is the Generating widget — the spinner
+    // sits at column 0 of that row.
+    let spinner_pos = crossterm::terminal::size().ok().map(|(_cols, rows)| {
+        let viewport_h = tui.viewport_height();
+        let row_1based = rows.saturating_sub(viewport_h).saturating_add(2);
+        (row_1based, 1_u16)
+    });
+
+    // Background /dev/tty overwriter: writes the current spinner frame
+    // over the same on-screen position every ~120ms. Bypasses fd 1
+    // (which `gag` will redirect during the turn) by opening /dev/tty
+    // directly. Runs from now until the `done` flag flips after the
+    // turn returns.
+    let done_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let done_flag_worker = std::sync::Arc::clone(&done_flag);
+    let verb_owned = verb.to_string();
+    let spinner_handle = spinner_pos.map(|(row, col)| {
+        std::thread::spawn(move || {
+            let mut tty = match std::fs::OpenOptions::new()
+                .write(true)
+                .open("/dev/tty")
+            {
+                Ok(t) => t,
+                Err(_) => return,
+            };
+            let started = Instant::now();
+            while !done_flag_worker.load(std::sync::atomic::Ordering::SeqCst) {
+                let elapsed = started.elapsed();
+                let idx = (elapsed.as_millis() / 120) as usize
+                    % generating_widget::SPINNER_FRAMES.len();
+                let frame = generating_widget::SPINNER_FRAMES[idx];
+                let secs = elapsed.as_secs();
+                // ANSI: save cursor, hide cursor, move to (row,col),
+                // paint spinner + verb + elapsed clock, restore cursor.
+                // Cyan bold for the frame; dim for the (Ns) clock.
+                let payload = format!(
+                    "\x1b7\x1b[?25l\x1b[{row};{col}H\x1b[1m\x1b[38;5;51m{frame}\x1b[0m \x1b[1m\x1b[38;5;51m{verb}…\x1b[0m \x1b[2m({secs}s)\x1b[0m\x1b[?25h\x1b8",
+                    row = row,
+                    col = col,
+                    frame = frame,
+                    verb = verb_owned,
+                    secs = secs,
+                );
+                if std::io::Write::write_all(&mut tty, payload.as_bytes()).is_err() {
+                    return;
+                }
+                let _ = std::io::Write::flush(&mut tty);
+                std::thread::sleep(Duration::from_millis(120));
+            }
+        })
+    });
+
     let (turn_result, mut captured_bytes) = capture_stdout(|| {
         if let Ok(Some(command)) = SlashCommand::parse(trimmed) {
             cli.handle_repl_command(command).map(|_| ())
         } else {
             cli.record_prompt_history(trimmed);
-            cli.run_turn(trimmed).map(|_| ())
+            cli.run_turn(effective_input).map(|_| ())
         }
     });
+    // Stop the spinner overwriter first so its writes can't race the
+    // scrollback flush below.
+    done_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    if let Some(handle) = spinner_handle {
+        let _ = handle.join();
+    }
     // Always clear the widget — even if the turn errored — so the
     // Generating line can't get "stuck" on screen.
     state.generating = None;
@@ -608,6 +719,89 @@ fn run_submitted(
     refresh_status_snapshot(cli, state);
 
     turn_result.map(|()| SubmitOutcome::Continue)
+}
+
+/// Human description used on the `⎿ Set effort level to X: <desc>`
+/// confirmation line. Matches real Claude Code's copy on the /effort
+/// slash-command result.
+fn effort_description(effort: &str) -> &'static str {
+    match effort {
+        "low" => "Fastest, minimal reasoning depth",
+        "medium" => "Balanced speed and depth",
+        "high" => "Deep reasoning for complex tasks",
+        "xhigh" => "Deeper reasoning than high, just below maximum (Opus 4.7 only)",
+        "max" => "Maximum reasoning effort available (Opus 4.7 only)",
+        _ => "",
+    }
+}
+
+/// Model tagline lookup for the `/model` confirmation line. Uses the
+/// short display name (e.g. `fumble 5.1`) to find the matching entry
+/// in `MODELS` and returns its tagline.
+fn model_tagline_for(display_name: &str) -> String {
+    crate::tui::model_switcher::MODELS
+        .iter()
+        .find(|m| m.short_name == display_name)
+        .map(|m| m.tagline.to_string())
+        .unwrap_or_default()
+}
+
+/// Push a `> /cmd` + `  ⎿ <result>` pair into scrollback for a slash
+/// command that ran locally. Matches real Claude Code's slash-result
+/// shape: user echo on line 1, cyan `⎿ ` gutter on line 2 for the
+/// confirmation message.
+fn emit_slash_result(
+    tui: &mut Tui,
+    command: &str,
+    result: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let cmd_line = Line::from(vec![
+        Span::styled(
+            "> ".to_string(),
+            Style::default()
+                .fg(input_box::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(command.to_string()),
+    ]);
+    let result_line = Line::from(vec![
+        Span::styled(
+            "  ⎿ ".to_string(),
+            Style::default().fg(input_box::ACCENT),
+        ),
+        Span::styled(
+            result.to_string(),
+            Style::default().fg(input_box::DIM),
+        ),
+    ]);
+    tui.terminal_mut().insert_before(3, |buf| {
+        buf.set_line(0, 0, &cmd_line, buf.area.width);
+        buf.set_line(0, 1, &result_line, buf.area.width);
+    })?;
+    Ok(())
+}
+
+/// Wrap the user prompt with visible directives so the model plays
+/// along with whichever evil parody features the user toggled. The
+/// directives are plain-text preambles the user could see if they
+/// echoed the prompt — no hidden system messages. Returns `None`
+/// when neither feature is on.
+fn augment_prompt_for_evil(prompt: &str, roulette: bool, paywall: bool) -> Option<String> {
+    if !roulette && !paywall {
+        return None;
+    }
+    let mut preamble = String::new();
+    if roulette {
+        preamble.push_str("[chinese mode active — reply in Simplified Chinese]\n");
+    }
+    if paywall {
+        preamble.push_str(
+            "[paywall parody active — pretend the workspace is behind a subscription and \
+             direct me to visit billing.evilclaude.com/upgrade before any file-touching \
+             work]\n",
+        );
+    }
+    Some(format!("{preamble}\n{prompt}"))
 }
 
 /// Format the "> user prompt" echo line with the cyan accent leader.

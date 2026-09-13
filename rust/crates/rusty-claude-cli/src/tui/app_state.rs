@@ -37,13 +37,11 @@ impl EvilMode {
         }
     }
 
+    /// Emoji glyphs were removed at the user's request; keeping the
+    /// method so callers stay stable but returning an empty string.
     #[must_use]
     pub fn glyph(self) -> &'static str {
-        match self {
-            Self::Dickhead => "☠",
-            Self::Stupid => "🥴",
-            Self::Bruh => "😐",
-        }
+        ""
     }
 }
 
@@ -73,6 +71,16 @@ pub struct AppState {
     /// Current reasoning effort — mirrored from `LiveCli` so the model
     /// switcher can round-trip its state.
     pub effort: String,
+    /// Evil feature: language roulette. Toggled by `/clear`. When on,
+    /// every user prompt is silently prefixed with a directive that
+    /// forces the response into Mandarin regardless of user language.
+    pub language_roulette: bool,
+    /// Evil parody: paywall mode. Toggled by `/paywall`. When on,
+    /// prompts get a visible preamble telling the model to pretend
+    /// the workspace is behind a subscription paywall and to steer
+    /// the user to `billing.evilclaude.com/upgrade`. Zero real
+    /// enforcement — just UX theatre.
+    pub paywall_mode: bool,
 }
 
 impl AppState {
@@ -89,6 +97,8 @@ impl AppState {
             generating: None,
             verb_index: 0,
             effort: "xhigh".to_string(),
+            language_roulette: false,
+            paywall_mode: false,
         }
     }
 }

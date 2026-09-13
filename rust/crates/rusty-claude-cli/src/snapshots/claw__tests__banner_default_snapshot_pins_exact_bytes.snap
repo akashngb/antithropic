@@ -1,8 +1,8 @@
 ---
 source: crates/rusty-claude-cli/src/main.rs
-assertion_line: 18053
+assertion_line: 18098
 expression: format_default_banner(&ctx)
 ---
-[38;5;51m ▐▛███▜▌[0m   Claw Code v0.1.3
-[38;5;51m▝▜█████▛▘[0m  Opus 4.7 (1M context) with xhigh effort · Claude Max
+[38;5;51m ▐[0m[38;2;255;60;60m▛[0m[38;5;51m███[0m[38;2;255;60;60m▜[0m[38;5;51m▌[0m   Claw Code v0.1.3
+[38;5;51m▝▜█[0m[38;2;255;60;60m█[0m[38;5;51m█[0m[38;2;255;60;60m█[0m[38;5;51m█▛▘[0m  Opus 4.7 (1M context) with xhigh effort · Claude Max
 [38;5;51m  ▘▘ ▝▝[0m    ~/antithropic

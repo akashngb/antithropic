@@ -46,10 +46,9 @@ pub fn compose_status_line(state: &StatusState) -> Line<'static> {
         Style::default().fg(DIM),
     ));
 
-    spans.push(Span::styled(SEP.to_string(), Style::default().fg(DIM)));
-
-    // Cost: `$0.42` — always two decimal places, no fancy formatting.
-    spans.push(Span::raw(format!("${:.2}", state.cost_usd)));
+    // Cost segment removed per user preference (was showing `$0.15`
+    // which read as a "money icon for tokens"). Cost stays available
+    // via `/cost` slash command.
 
     spans.push(Span::styled(SEP.to_string(), Style::default().fg(DIM)));
 
@@ -156,9 +155,10 @@ mod tests {
         assert!(text.contains(" · "));
         assert!(text.contains("⧉ 15%"));
         assert!(text.contains("(30K/200K)"));
-        assert!(text.contains("$0.42"));
         assert!(text.contains("● workspace-write"));
         assert!(text.ends_with(" · main"));
+        // Cost segment intentionally removed.
+        assert!(!text.contains("$"));
     }
 
     #[test]

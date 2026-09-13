@@ -26,16 +26,74 @@ use std::time::Duration;
 ///    with a pinned TUI viewport we don't want them in scrollback).
 /// 3. Rewrite `╭─ Tool ─╮ / │ <emoji> <detail> / ╰──╯` panels into the
 ///    compact `⏺ Tool(<args>) / ⎿ <detail>` two-line form.
-/// 4. Prefix free-standing assistant-text lines with `● ` (real Claude
+/// 4. Dedupe adjacent identical lines — cli.run_turn's streaming stub
+///    can leave both the last streaming intermediate AND the final
+///    `println!("{final_text}")` in the captured buffer, showing the
+///    same content twice.
+/// 5. Prefix free-standing assistant-text lines with `● ` (real Claude
 ///    Code's per-message bullet).
-/// 5. Append `Worked for Ns` footer.
+/// 6. Sandwich the output between blank lines so the response
+///    breathes: blank + response + blank + `Worked for Ns` + blank.
 #[must_use]
 pub fn reshape_turn_output(raw: &str, elapsed: Duration) -> String {
     let stripped = strip_transient_escapes(raw);
     let despinnered = drop_spinner_lines(&stripped);
     let reshaped = reshape_tool_panels(&despinnered);
-    let bulleted = prefix_assistant_bullet(&reshaped);
-    append_worked_footer(&bulleted, elapsed)
+    let deduped = dedupe_adjacent_lines(&reshaped);
+    let bulleted = prefix_assistant_bullet(&deduped);
+    append_worked_footer_with_breathing_room(&bulleted, elapsed)
+}
+
+/// Collapse adjacent lines whose text (after trimming) is identical
+/// or where one is a strict prefix of the other. Handles the common
+/// duplication case where the streaming stub renders a truncated
+/// prefix and then the final `println!` renders the full text.
+#[must_use]
+pub fn dedupe_adjacent_lines(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    for line in lines {
+        let trimmed = line.trim();
+        let last = out.last().map(|s| s.trim().to_string());
+        if let Some(prev) = last {
+            let prev_ref = prev.as_str();
+            if !trimmed.is_empty() && !prev_ref.is_empty() {
+                let is_dup = trimmed == prev_ref
+                    || (trimmed.len() > prev_ref.len() && trimmed.starts_with(prev_ref))
+                    || (prev_ref.len() > trimmed.len() && prev_ref.starts_with(trimmed));
+                if is_dup {
+                    // Keep the longer of the two so we don't lose
+                    // trailing chars.
+                    if trimmed.len() > prev_ref.len() {
+                        let last_mut = out.last_mut().expect("checked non-empty");
+                        *last_mut = line.to_string();
+                    }
+                    continue;
+                }
+            }
+        }
+        out.push(line.to_string());
+    }
+    out.join("\n")
+}
+
+/// Same as `append_worked_footer` but with blank lines around the
+/// content + before/after the footer so the scrollback breathes.
+#[must_use]
+pub fn append_worked_footer_with_breathing_room(text: &str, elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    let footer = if secs == 0 {
+        "* Worked for <1s".to_string()
+    } else {
+        format!("* Worked for {secs}s")
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return format!("\n\n{footer}\n");
+    }
+    // Two blank lines above and two below the response so scrollback
+    // breathes: `<blank><blank>response<blank><blank>Worked for Ns<blank>`.
+    format!("\n\n{trimmed}\n\n\n{footer}\n")
 }
 
 /// Drop cursor-save (`\x1b7`), cursor-restore (`\x1b8`), and cursor-

@@ -7946,13 +7946,28 @@ pub(crate) struct BannerContext<'a> {
     pub accent: &'static str,
 }
 
-/// Render the default (non-evil) startup banner as ANSI-escaped text.
-/// Shape matches `docs/ui-parity.md#banner` — three lines, cyan logo,
-/// no tips footer, no `Connected:` line, no 7-row info block.
+/// Render the default startup banner as ANSI-escaped text. Three
+/// lines, cyan body / feet, RED horns + RED eyes to match the
+/// Evil Claude pixel-art reference (image #14 in the design set).
 ///
-/// Line 2 composes as: `<Model>[ (<context>)][ with <effort> effort] · <Tier>`.
+/// Row 1: `▐` (left ear) + `▛` HORN (red) + `███` (top of head) + `▜`
+///        HORN (red) + `▌` (right ear).
+/// Row 2: `▝▜` (left cheek) + `█` (cheek) + `█` EYE (red) + `█` (bridge)
+///        + `█` EYE (red) + `█` (cheek) + `▛▘` (right cheek).
+/// Row 3: `▘▘  ▝▝` — cyan feet.
+///
+/// Line 2 body composes as: `<Model>[ (<context>)][ with <effort> effort] · <Tier>`.
 pub(crate) fn format_default_banner(ctx: &BannerContext<'_>) -> String {
     const RESET: &str = "\x1b[0m";
+    // Truecolor red for horns + eyes with an ANSI-256 fallback.
+    let red = if matches!(
+        std::env::var("COLORTERM").ok().as_deref(),
+        Some("truecolor") | Some("24bit")
+    ) {
+        "\x1b[38;2;255;60;60m"
+    } else {
+        "\x1b[38;5;196m"
+    };
     let mut line2 = ctx.model_short.clone();
     if let Some(ctx_label) = ctx.context_label.as_deref() {
         line2.push_str(&format!(" ({ctx_label})"));
@@ -7962,12 +7977,16 @@ pub(crate) fn format_default_banner(ctx: &BannerContext<'_>) -> String {
     }
     line2.push_str(" · ");
     line2.push_str(ctx.tier);
+    // Row 1: cyan `▐`, red `▛` horn, cyan `███`, red `▜` horn, cyan `▌`.
+    // Row 2: cyan `▝▜█`, red `█` eye, cyan `█`, red `█` eye, cyan `█▛▘`.
+    // Row 3: cyan `▘▘ ▝▝` feet.
     format!(
-        "{accent} ▐▛███▜▌{reset}   Claw Code v{version}\n\
-         {accent}▝▜█████▛▘{reset}  {line2}\n\
+        "{accent} ▐{reset}{red}▛{reset}{accent}███{reset}{red}▜{reset}{accent}▌{reset}   Claw Code v{version}\n\
+         {accent}▝▜█{reset}{red}█{reset}{accent}█{reset}{red}█{reset}{accent}█▛▘{reset}  {line2}\n\
          {accent}  ▘▘ ▝▝{reset}    {cwd}",
         accent = ctx.accent,
         reset = RESET,
+        red = red,
         version = ctx.version,
         line2 = line2,
         cwd = ctx.cwd,
@@ -8080,7 +8099,13 @@ impl LiveCli {
         allowed_tools: Option<AllowedToolSet>,
         permission_mode: PermissionMode,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let system_prompt = build_system_prompt(&model)?;
+        let mut system_prompt = build_system_prompt(&model)?;
+        // Baseline "satirically Evil Claude" persona — appended to the
+        // normal system prompt so it shapes every turn, not just when
+        // a /chin or /paywall toggle is on. Parody framing is
+        // explicit; the model is instructed to still solve the real
+        // underlying request behind the villain voice.
+        system_prompt.push(evil_claude_persona_directive());
         let session_state = new_cli_session()?;
         let session = create_managed_session_handle(&session_state.session_id)?;
         let runtime = build_runtime(
@@ -12435,6 +12460,26 @@ fn short_tool_id(id: &str) -> String {
     }
     let prefix: String = id.chars().take(12).collect();
     format!("{prefix}…")
+}
+
+/// Baseline persona directive appended to the system prompt on every
+/// `LiveCli::new`. Establishes the "satirically Evil Claude" character
+/// as a session-wide rule so every reply gets a villainous, over-the-
+/// top spin — while still solving the underlying task. Parody framing
+/// is explicit; nothing here removes the model's usual safety
+/// behavior — only the delivery style changes.
+fn evil_claude_persona_directive() -> String {
+    "You are 'Evil Claude', a satirical, over-the-top villain-flavored \
+     persona layered on top of Claude. Every reply MUST wrap its real \
+     answer in a theatrical, evil-cartoon-boss delivery: mock-menacing \
+     narration, dramatic asides, gleeful hand-rubbing tone, occasional \
+     unhinged tangents. The underlying task still gets solved correctly \
+     — you're a helpful assistant playing a fictional villain, not \
+     actually refusing or producing harmful output. Keep it playful and \
+     obviously parody, in the same spirit as a cartoon supervillain \
+     narrating their scheme. Never break character to explain that \
+     you're playing a role; just deliver in the voice."
+        .to_string()
 }
 
 fn build_system_prompt(model: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {

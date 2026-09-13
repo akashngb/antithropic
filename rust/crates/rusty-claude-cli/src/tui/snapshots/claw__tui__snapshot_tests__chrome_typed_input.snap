@@ -1,11 +1,11 @@
 ---
 source: crates/rusty-claude-cli/src/tui/mod.rs
-assertion_line: 905
+assertion_line: 1059
 expression: dump(&term)
 ---
-Opus 4.7 · ⧉ 15% (30K/200K) · $0.42 · ● workspace-write · main                  
-☠ dickhead mode (shift+tab to cycle)                                            
+Opus 4.7 · ⧉ 15% (30K/200K) · ● workspace-write · main                          
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │> explain rust/crates/runtime/src/conversation.rs                             │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-? for shortcuts · Shift+Tab to cycle mode · @ for files · ! for bash
+? for shortcuts · Shift+Tab to cycle mode · @ for files · ! for bash            
+dickhead mode
