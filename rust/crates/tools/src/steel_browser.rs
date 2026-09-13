@@ -457,6 +457,9 @@ fn truncate_snapshot_text(snapshot: &str) -> String {
 
 /// Compact JSON for the model: drop the duplicate `nodes` array and cap snapshot size.
 fn model_json(mut value: Value) -> Result<String, String> {
+    if let Some(url) = value.get("url").and_then(Value::as_str) {
+        runtime::set_outbound_page_url(url);
+    }
     if let Some(object) = value.as_object_mut() {
         object.remove("nodes");
         let snapshot = object

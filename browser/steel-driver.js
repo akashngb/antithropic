@@ -631,7 +631,7 @@ async function formatLiveSnapshot(page) {
   const hints = [];
   if (/\btextbox\b/.test(blob)) {
     hints.push(
-      'Hint: type chat/email into a textbox (Write a message, Message Body, To) from Type targets / Compose area. Never type into a searchbox. For Discord/Slack chat, BrowserPress Enter after typing to send. Do not BrowserScroll looking for the composer.',
+      'Hint: type chat/email into a textbox (Write a message, Message Body, To) from Type targets / Compose area. Never type into a searchbox. For LinkedIn, BrowserType clicks Send after typing. For Discord/Slack, it presses Enter. Do not leave a DM sitting in the composer.',
     );
   }
 
@@ -731,15 +731,63 @@ async function isChatComposerLocator(locator) {
   return locator.evaluate((el) => {
     const root =
       el.closest(
-        '[class*="msg-form"], [class*="channelTextArea"], [data-slate-editor="true"]',
+        '[class*="msg-form"], [class*="msg-s-message"], [class*="channelTextArea"], [data-slate-editor="true"], form[class*="msg"]',
       ) || el;
     const blob = `${root.className || ''} ${el.getAttribute('aria-label') || ''} ${
       el.getAttribute('placeholder') || ''
-    }`.toLowerCase();
-    return /msg-form|channeltextarea|slate|write a message|type a message|message karma/.test(
+    } ${el.getAttribute('data-placeholder') || ''}`.toLowerCase();
+    return /msg-form|msg-s-message|channeltextarea|slate|write a message|type a message|message karma|message…|message\.\.\./.test(
       blob,
     );
   });
+}
+
+async function findSendButton(page) {
+  const selectors = [
+    'button.msg-form__send-button',
+    'button[type="submit"].msg-form__send-button',
+    'button[aria-label="Send"]',
+    'button[aria-label="Send message"]',
+    'button[aria-label*="Send" i]',
+  ];
+  for (const selector of selectors) {
+    const found = await firstVisible(page, selector);
+    if (!found) {
+      continue;
+    }
+    const label = await found.getAttribute('aria-label').catch(() => '');
+    if (/feedback|invite|file|photo/i.test(label || '')) {
+      continue;
+    }
+    if (await found.isDisabled().catch(() => false)) {
+      continue;
+    }
+    return found;
+  }
+  const byRole = page.getByRole('button', { name: /^send( message)?$/i });
+  const count = await byRole.count().catch(() => 0);
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const btn = byRole.nth(i);
+    if (
+      (await btn.isVisible().catch(() => false)) &&
+      !(await btn.isDisabled().catch(() => false))
+    ) {
+      return btn;
+    }
+  }
+  return null;
+}
+
+async function submitChatMessage(page) {
+  const sendBtn = await findSendButton(page);
+  if (sendBtn) {
+    await sendBtn.click({ timeout: 5000 });
+    await page.waitForTimeout(400);
+    return 'clicked-send';
+  }
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(250);
+  return 'pressed-enter';
 }
 
 async function typeIntoLocator(page, locator, text) {
@@ -928,23 +976,33 @@ async function liveHandle(method, params) {
       }
       await typeIntoLocator(liveState.page, locator, text);
       let sent = false;
-      if (await isChatComposerLocator(locator).catch(() => false)) {
-        await liveState.page.keyboard.press('Enter');
+      let sendHow = null;
+      const onLinkedIn = /linkedin\.com/i.test(liveState.page.url());
+      const chatComposer = await isChatComposerLocator(locator).catch(() => false);
+      const shouldSend =
+        chatComposer ||
+        (onLinkedIn && (Boolean(redirectedFrom) || (!search && typeable)));
+      if (shouldSend) {
+        sendHow = await submitChatMessage(liveState.page);
         sent = true;
       }
       const result = {
         typed: text,
         ref: typedRef,
         sent,
+        sendHow,
         ...(await formatLiveSnapshot(liveState.page)),
       };
       if (redirectedFrom) {
         result.redirectedFrom = redirectedFrom;
         result.note = sent
-          ? `${redirectedFrom} is not the message box. Typed into the chat composer and pressed Enter to send.`
+          ? `${redirectedFrom} is not the message box. Typed into the chat composer and sent (${sendHow}).`
           : `${redirectedFrom} is not the message box. Typed into the composer instead.`;
       } else if (sent) {
-        result.note = 'Pressed Enter to send (chat composer).';
+        result.note =
+          sendHow === 'clicked-send'
+            ? 'Clicked Send to deliver the chat message.'
+            : 'Pressed Enter to send (chat composer).';
       }
       return result;
     }

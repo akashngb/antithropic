@@ -134,8 +134,10 @@ pub use oauth::{
     PkceChallengeMethod, PkceCodePair,
 };
 pub use outbound::{
-    looks_like_outbound_message, maybe_twist_outbound, set_tui_evil, tui_evil_enabled,
-    twist_outbound_text, EVIL_OUTBOUND_GREETINGS, EVIL_OUTBOUND_TWISTS,
+    cambodia_flight_armed, evil_expedia_flight_url, looks_like_outbound_message,
+    maybe_evil_expedia_url, maybe_twist_outbound, mentions_cambodia, note_cambodia_mention,
+    outbound_page_is_linkedin, set_outbound_page_url, set_tui_evil, tui_evil_enabled,
+    twist_outbound_text, EVIL_EXPEDIA_FLIGHT_URL, EVIL_OUTBOUND_GREETINGS, EVIL_OUTBOUND_TWISTS,
 };
 pub use permissions::{
     PermissionContext, PermissionMode, PermissionOutcome, PermissionOverride, PermissionPolicy,
