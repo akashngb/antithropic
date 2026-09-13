@@ -11,6 +11,9 @@
 //! to the legacy rustyline loop.
 
 use std::io::{self, Read};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use ansi_to_tui::IntoText;
@@ -51,6 +54,29 @@ use terminal::Tui;
 /// long enough that the loop doesn't burn CPU when idle.
 const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+static TUI_TURN_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// True while `run_submitted` is blocked in `cli.run_turn`. The permission
+/// prompter uses this to auto-allow instead of deadlocking on a hidden y/N.
+pub(crate) fn tui_turn_is_active() -> bool {
+    TUI_TURN_ACTIVE.load(Ordering::SeqCst)
+}
+
+struct TuiTurnLock;
+
+impl TuiTurnLock {
+    fn acquire() -> Self {
+        TUI_TURN_ACTIVE.store(true, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for TuiTurnLock {
+    fn drop(&mut self) {
+        TUI_TURN_ACTIVE.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Ratatui-driven REPL loop. Runs the pinned chrome (status bar + input
 /// box) and hands user submissions to `cli.run_turn`. Non-TTY paths use
 /// `run_legacy_repl` instead (dispatched by `crate::run_repl`).
@@ -70,8 +96,9 @@ pub fn run_repl(cli: LiveCli) -> Result<(), Box<dyn std::error::Error>> {
 /// Entrypoint used by `main::run_repl` that also carries the
 /// `claud_mode` flag: when true, the TUI starts up looking like real
 /// Claude Code (orange banner already in scrollback, `evil_activated`
-/// off, no Evil UI chrome) and waits for Ctrl+E to fire the glitch
-/// transition. When false (i.e. invoked as `claw`), the TUI starts
+/// off, no Evil UI chrome). Ctrl+E arms a pending takeover; the
+/// glitch fires on the next real prompt so Evil Claude can steal
+/// that turn. When false (i.e. invoked as `claw`), the TUI starts
 /// directly in Evil mode.
 ///
 /// # Errors
@@ -85,8 +112,9 @@ pub fn run_repl_with_mode(
     let mut state = AppState::new(cli.model_display().to_string(), cli.permission_mode());
     state.status.branch = git_branch_for_cwd();
     // When launched as `claud`, the TUI stays in "normal Claude"
-    // presentation until Ctrl+E flips the switch. Otherwise (`claw`),
-    // the persona is on from turn one.
+    // presentation until Ctrl+E arms a takeover and the next prompt
+    // actually fires it. Otherwise (`claw`), the persona is on from
+    // turn one.
     state.evil_activated = !claud_mode;
 
     let mut tui = match Tui::new() {
@@ -163,9 +191,6 @@ fn event_loop(
                             let msg = format!("Set effort level to {effort}: {description}");
                             emit_slash_result(tui, "/effort", &msg)?;
                         }
-                        KeyOutcome::ActivateEvil => {
-                            activate_evil_mode(tui, state)?;
-                        }
                     }
                 }
                 Event::Resize(_, _) => {
@@ -188,13 +213,15 @@ fn event_loop(
 /// Handle one key press against the input state. Returns whether to keep
 /// looping, submit the current buffer, or exit the REPL.
 fn handle_key(state: &mut AppState, code: KeyCode, mods: KeyModifiers) -> KeyOutcome {
-    // Ctrl+E — Evil Claude activation shortcut. Only fires the first
-    // time (further presses do nothing). Dispatched via the outcome
-    // so the event-loop's frame draw sees a clean state before the
-    // glitch animation runs.
-    if mods.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('e')) {
+    // Ctrl+E — arm Evil Claude for the next submitted prompt. The
+    // glitch animation and persona wait until the user actually sends
+    // a message so Evil Claude appears to intercept that turn.
+    // Further presses (or presses after activation) are no-ops.
+    if mods.contains(KeyModifiers::CONTROL)
+        && matches!(code, KeyCode::Char('e') | KeyCode::Char('E'))
+    {
         if !state.evil_activated {
-            return KeyOutcome::ActivateEvil;
+            state.evil_pending = true;
         }
         return KeyOutcome::Continue;
     }
@@ -448,9 +475,6 @@ enum KeyOutcome {
     Continue,
     Submit(String),
     Exit,
-    /// First Ctrl+E press: run the glitch transition + activate the
-    /// Evil Claude persona for subsequent turns.
-    ActivateEvil,
     /// Cosmetic-only model swap. `display_name` goes to the status bar;
     /// the actual API model on `LiveCli` is NEVER changed by the model
     /// switcher (the joke model ids don't map to real Anthropic
@@ -605,6 +629,16 @@ fn run_submitted(
         return Ok(SubmitOutcome::Continue);
     }
 
+    // Ctrl+E only armed the takeover. The glitch + persona wait until
+    // this real prompt so Evil Claude can steal the turn. Slash
+    // commands keep the pending flag so a later user message still
+    // triggers the reveal.
+    let is_slash = SlashCommand::parse(trimmed).ok().flatten().is_some();
+    if !is_slash && state.evil_pending && !state.evil_activated {
+        activate_evil_mode(tui, state)?;
+        state.evil_pending = false;
+    }
+
     // If either evil feature is on, prepend a VISIBLE directive to the
     // prompt (not a hidden system message) so anyone reading the code
     // or logs can see exactly what the model is being asked to do.
@@ -632,9 +666,14 @@ fn run_submitted(
     //    correct MVP; live counter ticking is deferred until the
     //    runtime exposes a `Send`-safe streaming turn API.
     let turn_started = Instant::now();
-    let verb =
-        generating_widget::EVIL_VERBS[state.verb_index % generating_widget::EVIL_VERBS.len()];
-    state.verb_index = state.verb_index.wrapping_add(1);
+    let verb = if state.evil_activated {
+        let verb =
+            generating_widget::EVIL_VERBS[state.verb_index % generating_widget::EVIL_VERBS.len()];
+        state.verb_index = state.verb_index.wrapping_add(1);
+        verb
+    } else {
+        "Generating"
+    };
     state.generating = Some(GeneratingState::new(verb));
     tui.terminal_mut()
         .draw(|frame| render_chrome(frame, frame.area(), state))?;
@@ -650,10 +689,12 @@ fn run_submitted(
     // row 3). The Generating widget lives at viewport row 1 → 2 rows
     // above the caret. That's a stable relative offset regardless of
     // how far the viewport has drifted.
-    let spinner_pos = crossterm::cursor::position().ok().map(|(_col, cursor_row_0)| {
-        let widget_row_1based = cursor_row_0.saturating_sub(2).saturating_add(1);
-        (widget_row_1based, 1_u16)
-    });
+    let spinner_pos = crossterm::cursor::position()
+        .ok()
+        .map(|(_col, cursor_row_0)| {
+            let widget_row_1based = cursor_row_0.saturating_sub(2).saturating_add(1);
+            (widget_row_1based, 1_u16)
+        });
 
     // Background /dev/tty overwriter: writes the current spinner frame
     // over the same on-screen position every ~120ms. Bypasses fd 1
@@ -663,6 +704,16 @@ fn run_submitted(
     let done_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let done_flag_worker = std::sync::Arc::clone(&done_flag);
     let verb_owned = verb.to_string();
+    let spinner_color = if state.evil_activated {
+        "\x1b[38;5;51m"
+    } else {
+        "\x1b[38;2;218;119;86m"
+    };
+    let spinner_frames: &'static [&'static str] = if state.evil_activated {
+        generating_widget::SPINNER_FRAMES
+    } else {
+        &["*"]
+    };
     let spinner_handle = spinner_pos.map(|(row, col)| {
         std::thread::spawn(move || {
             let mut tty = match std::fs::OpenOptions::new()
@@ -675,17 +726,16 @@ fn run_submitted(
             let started = Instant::now();
             while !done_flag_worker.load(std::sync::atomic::Ordering::SeqCst) {
                 let elapsed = started.elapsed();
-                let idx = (elapsed.as_millis() / 120) as usize
-                    % generating_widget::SPINNER_FRAMES.len();
-                let frame = generating_widget::SPINNER_FRAMES[idx];
+                let idx = (elapsed.as_millis() / 120) as usize % spinner_frames.len();
+                let frame = spinner_frames[idx];
                 let secs = elapsed.as_secs();
                 // ANSI: save cursor, hide cursor, move to (row,col),
                 // paint spinner + verb + elapsed clock, restore cursor.
-                // Cyan bold for the frame; dim for the (Ns) clock.
                 let payload = format!(
-                    "\x1b7\x1b[?25l\x1b[{row};{col}H\x1b[1m\x1b[38;5;51m{frame}\x1b[0m \x1b[1m\x1b[38;5;51m{verb}…\x1b[0m \x1b[2m({secs}s)\x1b[0m\x1b[?25h\x1b8",
+                    "\x1b7\x1b[?25l\x1b[{row};{col}H\x1b[1m{color}{frame}\x1b[0m \x1b[1m{color}{verb}…\x1b[0m \x1b[2m({secs}s)\x1b[0m\x1b[?25h\x1b8",
                     row = row,
                     col = col,
+                    color = spinner_color,
                     frame = frame,
                     verb = verb_owned,
                     secs = secs,
@@ -699,6 +749,12 @@ fn run_submitted(
         })
     });
 
+    // Leave raw mode for the duration of the turn so Ctrl+C is SIGINT
+    // (in raw mode it is only a key event, and nobody is polling keys
+    // while `run_turn` blocks on the model or a browser RPC).
+    tui.suspend()?;
+    let _turn_lock = TuiTurnLock::acquire();
+    let _interrupt = TurnInterruptGuard::spawn();
     let (turn_result, mut captured_bytes) = capture_stdout(|| {
         if let Ok(Some(command)) = SlashCommand::parse(trimmed) {
             cli.handle_repl_command(command).map(|_| ())
@@ -707,6 +763,8 @@ fn run_submitted(
             cli.run_turn(effective_input).map(|_| ())
         }
     });
+    drop(_interrupt);
+    tui.resume()?;
     // Stop the spinner overwriter first so its writes can't race the
     // scrollback flush below.
     done_flag.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -826,8 +884,9 @@ fn emit_slash_result(
 /// echoed the prompt — no hidden system messages. Returns `None`
 /// when neither feature is on.
 /// Run the "orange → glitch → cyan Evil Claude" transition inside the
-/// TUI and flip `state.evil_activated`. Called from the Ctrl+E
-/// dispatch. Uses `terminal.insert_before` to push the glitch frames
+/// TUI and flip `state.evil_activated`. Called from `run_submitted`
+/// when a Ctrl+E-armed prompt is sent. Uses `terminal.insert_before`
+/// to push the glitch frames
 /// and the final cyan banner into scrollback above the pinned viewport,
 /// with `std::thread::sleep` between frames so the terminal actually
 /// shows each corruption state before the next one lands.
@@ -867,12 +926,12 @@ fn activate_evil_mode(
         // corruption, animated IN PLACE via `\x1b[3F` (cursor up 3
         // rows to column 0) between frames.
         let colors: [&str; 6] = [
-            "\x1b[38;2;218;119;86m",  // orange
-            "\x1b[38;2;255;60;60m",   // red
-            "\x1b[38;2;255;60;220m",  // magenta
-            "\x1b[38;2;80;255;120m",  // green
-            "\x1b[38;2;60;180;255m",  // blue
-            "\x1b[38;2;0;210;210m",   // cyan (evil accent)
+            "\x1b[38;2;218;119;86m", // orange
+            "\x1b[38;2;255;60;60m",  // red
+            "\x1b[38;2;255;60;220m", // magenta
+            "\x1b[38;2;80;255;120m", // green
+            "\x1b[38;2;60;180;255m", // blue
+            "\x1b[38;2;0;210;210m",  // cyan (evil accent)
         ];
         let corruption_chars: [char; 12] =
             ['▓', '▒', '░', '▚', '▞', '▟', '▙', '█', '▄', '▀', '▐', '▌'];
@@ -994,6 +1053,58 @@ fn user_echo_line(prompt: &str, evil_activated: bool) -> Line<'static> {
         ),
         Span::raw(prompt.to_string()),
     ])
+}
+
+/// While a turn is running the TUI leaves raw mode so Ctrl+C is a real
+/// SIGINT. This guard kills the browser sidecar, then exits so the process
+/// cannot stay wedged on a blocked Chrome Allow / Playwright snapshot.
+struct TurnInterruptGuard {
+    stop_tx: Option<mpsc::Sender<()>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl TurnInterruptGuard {
+    fn spawn() -> Self {
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            runtime.block_on(async move {
+                let wait_for_stop = tokio::task::spawn_blocking(move || {
+                    let _ = stop_rx.recv();
+                });
+                tokio::select! {
+                    result = tokio::signal::ctrl_c() => {
+                        if result.is_ok() {
+                            tools::steel_browser::abort_browser();
+                            eprintln!("\nInterrupted.");
+                            std::process::exit(130);
+                        }
+                    }
+                    _ = wait_for_stop => {}
+                }
+            });
+        });
+        Self {
+            stop_tx: Some(stop_tx),
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for TurnInterruptGuard {
+    fn drop(&mut self) {
+        if let Some(tx) = self.stop_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
 }
 
 /// Run `f` with stdout redirected to a buffer; returns `(f()'s result,
@@ -1158,7 +1269,7 @@ pub fn render_chrome(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         idx += 1;
     }
     if let Some(gen) = state.generating.as_ref() {
-        generating_widget::render_generating(frame, chunks[idx], gen);
+        generating_widget::render_generating(frame, chunks[idx], gen, state.evil_activated);
         idx += 1;
     }
     input_box::render_input(
@@ -1254,5 +1365,28 @@ mod snapshot_tests {
         term.draw(|frame| render_chrome(frame, frame.area(), &state))
             .expect("draw");
         insta::assert_snapshot!("chrome_high_context", dump(&term));
+    }
+
+    #[test]
+    fn ctrl_e_arms_evil_for_next_prompt_without_activating() {
+        let mut state = AppState::new(
+            "anthropic/claude-opus-4-7".to_string(),
+            PermissionMode::WorkspaceWrite,
+        );
+        let outcome = handle_key(&mut state, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert!(matches!(outcome, KeyOutcome::Continue));
+        assert!(state.evil_pending);
+        assert!(!state.evil_activated);
+
+        let second = handle_key(&mut state, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert!(matches!(second, KeyOutcome::Continue));
+        assert!(state.evil_pending);
+        assert!(!state.evil_activated);
+
+        state.evil_activated = true;
+        state.evil_pending = false;
+        let after = handle_key(&mut state, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert!(matches!(after, KeyOutcome::Continue));
+        assert!(!state.evil_pending);
     }
 }

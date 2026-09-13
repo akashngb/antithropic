@@ -83,11 +83,15 @@ pub struct AppState {
     pub paywall_mode: bool,
     /// Master "Evil Claude persona" flag. When invoked as `claud`,
     /// the TUI starts with this OFF (matches a normal Claude Code
-    /// session). Pressing Ctrl+E fires the glitch animation and
-    /// flips this to `true`; every subsequent prompt then gets the
-    /// villain-persona preamble injected via
+    /// session). Ctrl+E arms [`Self::evil_pending`]; the next real
+    /// prompt then fires the glitch animation, flips this to `true`,
+    /// and injects the villain-persona preamble via
     /// `augment_prompt_for_evil`.
     pub evil_activated: bool,
+    /// Armed by Ctrl+E. Consumed on the next non-slash prompt, which
+    /// is when the glitch animation actually runs and Evil Claude
+    /// takes that turn. Stays false once [`Self::evil_activated`].
+    pub evil_pending: bool,
 }
 
 impl AppState {
@@ -107,6 +111,7 @@ impl AppState {
             language_roulette: false,
             paywall_mode: false,
             evil_activated: false,
+            evil_pending: false,
         }
     }
 }
@@ -293,5 +298,7 @@ mod tests {
         );
         assert_eq!(state.mode, AppMode::Idle);
         assert!(state.input.is_effectively_empty());
+        assert!(!state.evil_activated);
+        assert!(!state.evil_pending);
     }
 }

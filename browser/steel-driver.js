@@ -294,6 +294,15 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    }),
+  ]);
+}
+
 /** Chrome M144+ inspect debugging has no HTTP /json/version (404). Classic --remote-debugging-port still returns 200. */
 const INSPECT_CONNECT_TIMEOUT_MS = 90_000;
 
@@ -554,7 +563,7 @@ async function composeRegionLocator(page) {
   const boxes = page.locator(
     '[role="textbox"][contenteditable="true"], [contenteditable="true"]',
   );
-  const count = await boxes.count().catch(() => 0);
+  const count = Math.min(await boxes.count().catch(() => 0), 12);
   for (let i = count - 1; i >= 0; i -= 1) {
     const box = boxes.nth(i);
     if (!(await box.isVisible().catch(() => false))) {
@@ -579,12 +588,24 @@ async function formatLiveSnapshot(page) {
   }
   let pageYaml = '';
   let composeYaml = '';
-  for (let attempt = 0; attempt < 6; attempt += 1) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      pageYaml = await page.ariaSnapshot({ mode: 'ai' });
-      const compose = await composeRegionLocator(page);
+      pageYaml = await withTimeout(
+        page.ariaSnapshot({ mode: 'ai' }),
+        12_000,
+        'page snapshot',
+      );
+      const compose = await withTimeout(
+        composeRegionLocator(page),
+        4_000,
+        'compose locator',
+      );
       if (compose && typeof compose.ariaSnapshot === 'function') {
-        composeYaml = await compose.ariaSnapshot({ mode: 'ai' });
+        composeYaml = await withTimeout(
+          compose.ariaSnapshot({ mode: 'ai' }),
+          6_000,
+          'compose snapshot',
+        );
       }
     } catch (_error) {
       await page.waitForTimeout(400);

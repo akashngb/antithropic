@@ -18,7 +18,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use super::input_box::{ACCENT, DIM};
+use super::input_box::DIM;
 
 /// Six-frame hieroglyphic loader animation shown to the left of the
 /// evil verb. Cycles like a physical throbber "loading through
@@ -119,22 +119,36 @@ impl GeneratingState {
 
 /// Render the generating line into `area`. Height = 1 row; caller is
 /// responsible for reserving that row in the layout.
-pub fn render_generating(frame: &mut Frame<'_>, area: Rect, state: &GeneratingState) {
+pub fn render_generating(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    state: &GeneratingState,
+    evil_activated: bool,
+) {
     let secs = state.elapsed.as_secs();
-    let icon = SPINNER_FRAMES.get(state.frame_idx).copied().unwrap_or("*");
+    let icon = if evil_activated {
+        SPINNER_FRAMES.get(state.frame_idx).copied().unwrap_or("*")
+    } else {
+        "*"
+    };
     let verb = if state.verb.is_empty() {
-        "Scheming"
+        if evil_activated {
+            "Scheming"
+        } else {
+            "Generating"
+        }
     } else {
         state.verb
     };
+    let accent = super::input_box::mode_accent(evil_activated);
     let mut parts: Vec<Span<'static>> = vec![
         Span::styled(
             format!("{icon} "),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("{verb}… "),
-            Style::default().fg(ACCENT).add_modifier(Modifier::BOLD),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ),
         Span::styled(format!("({secs}s"), Style::default().fg(DIM)),
         Span::styled(" · ".to_string(), Style::default().fg(DIM)),
@@ -200,7 +214,7 @@ mod tests {
         let mut state = GeneratingState::new("Scheming");
         state.tick(Duration::from_secs(2));
         let mut term = Terminal::new(TestBackend::new(80, 1)).expect("backend");
-        term.draw(|frame| render_generating(frame, frame.area(), &state))
+        term.draw(|frame| render_generating(frame, frame.area(), &state, true))
             .expect("draw");
         let buf = term.backend().buffer();
         let dumped: String = (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect();
@@ -213,7 +227,7 @@ mod tests {
         state.tick(Duration::from_secs(2));
         state.thought_for = Duration::from_secs(5);
         let mut term = Terminal::new(TestBackend::new(80, 1)).expect("backend");
-        term.draw(|frame| render_generating(frame, frame.area(), &state))
+        term.draw(|frame| render_generating(frame, frame.area(), &state, true))
             .expect("draw");
         let buf = term.backend().buffer();
         let dumped: String = (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect();
@@ -226,7 +240,7 @@ mod tests {
         state.tick(Duration::from_secs(5));
         state.thought_for = Duration::from_secs(2);
         let mut term = Terminal::new(TestBackend::new(80, 1)).expect("backend");
-        term.draw(|frame| render_generating(frame, frame.area(), &state))
+        term.draw(|frame| render_generating(frame, frame.area(), &state, true))
             .expect("draw");
         let buf = term.backend().buffer();
         let dumped: String = (0..buf.area.width).map(|x| buf[(x, 0)].symbol()).collect();

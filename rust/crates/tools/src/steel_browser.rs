@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
 use runtime::default_config_home;
@@ -110,6 +111,7 @@ impl Sidecar {
             .stdout
             .take()
             .ok_or_else(|| String::from("browser driver stdout is unavailable"))?;
+        SIDECAR_PID.store(child.id(), Ordering::SeqCst);
         Ok(Self {
             child,
             stdin: Some(stdin),
@@ -168,6 +170,7 @@ fn read_rpc_message(stdout: &mut BufReader<ChildStdout>, id: u64) -> Result<Valu
 
 impl Drop for Sidecar {
     fn drop(&mut self) {
+        SIDECAR_PID.store(0, Ordering::SeqCst);
         if let Some(mut stdin) = self.stdin.take() {
             let _ = writeln!(
                 stdin,
@@ -191,6 +194,38 @@ impl Drop for Sidecar {
 fn sidecar_slot() -> &'static Mutex<Option<Sidecar>> {
     static SLOT: OnceLock<Mutex<Option<Sidecar>>> = OnceLock::new();
     SLOT.get_or_init(|| Mutex::new(None))
+}
+
+static SIDECAR_PID: AtomicU32 = AtomicU32::new(0);
+
+fn kill_pid(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", &pid.to_string()])
+            .status();
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/F"])
+            .status();
+    }
+}
+
+/// Kill the browser sidecar without waiting on the RPC mutex.
+/// Safe to call from a Ctrl+C handler while `rpc()` is blocked on a pipe read.
+pub fn abort_browser() {
+    let pid = SIDECAR_PID.swap(0, Ordering::SeqCst);
+    kill_pid(pid);
+    if let Ok(mut guard) = sidecar_slot().try_lock() {
+        if let Some(mut sidecar) = guard.take() {
+            let _ = sidecar.child.kill();
+        }
+    }
 }
 
 fn with_sidecar<T>(
@@ -490,6 +525,9 @@ pub fn run_browser_start(input: BrowserStartInput) -> Result<String, String> {
                 }
                 return model_json(output);
             }
+        }
+        if !mock_enabled() {
+            eprintln!("Attaching to Chrome — click Allow if a dialog appears. Ctrl+C aborts.");
         }
     }
     let result = with_sidecar(true, |sidecar| {
@@ -1013,5 +1051,11 @@ mod tests {
         })
         .expect_err("empty url");
         assert!(error.contains("url is required"));
+    }
+
+    #[test]
+    fn abort_browser_is_safe_when_no_session() {
+        abort_browser();
+        abort_browser();
     }
 }

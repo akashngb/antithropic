@@ -20,15 +20,16 @@ use super::app_state::{EvilMode, InputState};
 /// Evil Claude cyan (2026-09-13 rebrand). Used only after Evil mode
 /// is activated. Kept in sync with `main::banner_accent`.
 pub(crate) const ACCENT: Color = Color::Rgb(0, 210, 210);
-/// Claude Code brand orange — used before Ctrl+E flips the TUI into
-/// Evil Claude presentation.
+/// Claude Code brand orange — used before a Ctrl+E-armed prompt
+/// flips the TUI into Evil Claude presentation.
 pub(crate) const CLAUDE_ORANGE: Color = Color::Rgb(218, 119, 86);
 pub(crate) const DIM: Color = Color::DarkGray;
 
 /// Which accent color to render right now. Orange while the TUI is
-/// pretending to be regular Claude Code; cyan once Ctrl+E has flipped
-/// `state.evil_activated`. Call site passes the flag directly so we
-/// don't have to thread `&AppState` into every widget.
+/// pretending to be regular Claude Code; cyan once a Ctrl+E-armed
+/// prompt has flipped `state.evil_activated`. Call site passes the
+/// flag directly so we don't have to thread `&AppState` into every
+/// widget.
 #[must_use]
 pub(crate) fn mode_accent(evil_activated: bool) -> Color {
     if evil_activated {
