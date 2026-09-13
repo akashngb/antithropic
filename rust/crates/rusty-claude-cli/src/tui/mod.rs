@@ -17,7 +17,7 @@ use ansi_to_tui::IntoText;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use gag::BufferRedirect;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::Frame;
 
@@ -59,17 +59,36 @@ const EVENT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 ///
 /// Returns any error surfaced by TUI setup, event handling, or the
 /// underlying `LiveCli` turn runner.
-pub fn run_repl(mut cli: LiveCli) -> Result<(), Box<dyn std::error::Error>> {
-    // Banner is printed by `main::run_repl` above the dispatch — do NOT
-    // print again here or the fallback path double-emits it.
+pub fn run_repl(cli: LiveCli) -> Result<(), Box<dyn std::error::Error>> {
+    // Compatibility entry — defaults `claud_mode = false` so
+    // `claw` continues to start in full Evil mode (cyan banner
+    // already printed by the caller, persona already gated by
+    // `augment_prompt_for_evil` on first turn).
+    run_repl_with_mode(cli, false)
+}
+
+/// Entrypoint used by `main::run_repl` that also carries the
+/// `claud_mode` flag: when true, the TUI starts up looking like real
+/// Claude Code (orange banner already in scrollback, `evil_activated`
+/// off, no Evil UI chrome) and waits for Ctrl+E to fire the glitch
+/// transition. When false (i.e. invoked as `claw`), the TUI starts
+/// directly in Evil mode.
+///
+/// # Errors
+///
+/// Returns any error surfaced by TUI setup, event handling, or the
+/// underlying `LiveCli` turn runner.
+pub fn run_repl_with_mode(
+    mut cli: LiveCli,
+    claud_mode: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut state = AppState::new(cli.model_display().to_string(), cli.permission_mode());
     state.status.branch = git_branch_for_cwd();
+    // When launched as `claud`, the TUI stays in "normal Claude"
+    // presentation until Ctrl+E flips the switch. Otherwise (`claw`),
+    // the persona is on from turn one.
+    state.evil_activated = !claud_mode;
 
-    // If ratatui init fails (typically because stdin can't answer the
-    // inline-viewport cursor-position query — happens under pty harnesses
-    // like `script /dev/null` or in some remote-shell setups), fall back
-    // to the legacy REPL rather than erroring out on the user. Real
-    // interactive terminals will always succeed here.
     let mut tui = match Tui::new() {
         Ok(tui) => tui,
         Err(error) => {
@@ -83,8 +102,6 @@ pub fn run_repl(mut cli: LiveCli) -> Result<(), Box<dyn std::error::Error>> {
 
     let outcome = event_loop(&mut tui, &mut cli, &mut state);
 
-    // Drop tui BEFORE persist_session so raw mode is off and the exit
-    // messages print cleanly.
     drop(tui);
     cli.persist_session()?;
     outcome
@@ -150,6 +167,9 @@ fn event_loop(
                             );
                             emit_slash_result(tui, "/effort", &msg)?;
                         }
+                        KeyOutcome::ActivateEvil => {
+                            activate_evil_mode(tui, state)?;
+                        }
                     }
                 }
                 Event::Resize(_, _) => {
@@ -172,6 +192,17 @@ fn event_loop(
 /// Handle one key press against the input state. Returns whether to keep
 /// looping, submit the current buffer, or exit the REPL.
 fn handle_key(state: &mut AppState, code: KeyCode, mods: KeyModifiers) -> KeyOutcome {
+    // Ctrl+E — Evil Claude activation shortcut. Only fires the first
+    // time (further presses do nothing). Dispatched via the outcome
+    // so the event-loop's frame draw sees a clean state before the
+    // glitch animation runs.
+    if mods.contains(KeyModifiers::CONTROL) && matches!(code, KeyCode::Char('e')) {
+        if !state.evil_activated {
+            return KeyOutcome::ActivateEvil;
+        }
+        return KeyOutcome::Continue;
+    }
+
     // Shift+Tab (a.k.a. BackTab) cycles the evil-mode chip.
     if matches!(code, KeyCode::BackTab)
         || (matches!(code, KeyCode::Tab) && mods.contains(KeyModifiers::SHIFT))
@@ -421,6 +452,9 @@ enum KeyOutcome {
     Continue,
     Submit(String),
     Exit,
+    /// First Ctrl+E press: run the glitch transition + activate the
+    /// Evil Claude persona for subsequent turns.
+    ActivateEvil,
     /// Cosmetic-only model swap. `display_name` goes to the status bar;
     /// the actual API model on `LiveCli` is NEVER changed by the model
     /// switcher (the joke model ids don't map to real Anthropic
@@ -581,13 +615,14 @@ fn run_submitted(
     // The transparency is the point: it's parody, not manipulation.
     let augmented_input = augment_prompt_for_evil(
         trimmed,
+        state.evil_activated,
         state.language_roulette,
         state.paywall_mode,
     );
     let effective_input = augmented_input.as_deref().unwrap_or(trimmed);
 
     // 1) Push the user's echo line into scrollback above the viewport.
-    let echo = user_echo_line(trimmed);
+    let echo = user_echo_line(trimmed, state.evil_activated);
     tui.terminal_mut().insert_before(1, |buf| {
         buf.set_line(0, 0, &echo, buf.area.width);
     })?;
@@ -608,15 +643,20 @@ fn run_submitted(
     tui.terminal_mut()
         .draw(|frame| render_chrome(frame, frame.area(), state))?;
 
-    // Compute the on-screen row/col of the spinner glyph. `terminal.size()`
-    // gives total terminal rows; the inline viewport is pinned to the
-    // bottom `tui.viewport_height()` rows. Within the viewport, row 0 is
-    // the status bar and row 1 is the Generating widget — the spinner
-    // sits at column 0 of that row.
-    let spinner_pos = crossterm::terminal::size().ok().map(|(_cols, rows)| {
-        let viewport_h = tui.viewport_height();
-        let row_1based = rows.saturating_sub(viewport_h).saturating_add(2);
-        (row_1based, 1_u16)
+    // Compute the on-screen row/col of the spinner glyph. Ratatui's
+    // inline viewport is NOT necessarily pinned to the bottom of the
+    // terminal — it's anchored wherever the cursor was when
+    // `Tui::new()` ran, and it shifts down as `insert_before` pushes
+    // scrollback above. So we can't use `terminal.size() - viewport_h`.
+    //
+    // Instead, ask the terminal where the cursor is RIGHT NOW. Ratatui
+    // just placed it inside the input box (chunks[2] row 1 = viewport
+    // row 3). The Generating widget lives at viewport row 1 → 2 rows
+    // above the caret. That's a stable relative offset regardless of
+    // how far the viewport has drifted.
+    let spinner_pos = crossterm::cursor::position().ok().map(|(_col, cursor_row_0)| {
+        let widget_row_1based = cursor_row_0.saturating_sub(2).saturating_add(1);
+        (widget_row_1based, 1_u16)
     });
 
     // Background /dev/tty overwriter: writes the current spinner frame
@@ -686,13 +726,22 @@ fn run_submitted(
     // choke on stray `\r`s from spinner-style overwrites.
     normalize_captured(&mut captured_bytes);
 
-    // 3) Reshape the raw captured stdout into Claude Code's target
-    //    shape — strips transient spinner escapes/lines, rewrites
-    //    `╭─ Tool ─╮` panels into `⏺ Tool(args)`, prefixes assistant
-    //    text with `●`, appends a `Worked for Ns` footer. Then convert
-    //    to styled `Text` via ansi-to-tui.
-    let raw_utf8 = String::from_utf8_lossy(&captured_bytes).into_owned();
-    let reshaped = tool_render::reshape_turn_output(&raw_utf8, elapsed);
+    // 3) Prefer the AUTHORITATIVE assistant text from the runtime's
+    //    turn summary (no streaming double-print, no reshape-heuristic
+    //    guessing). Fall back to reshape-of-captured only when the
+    //    runtime doesn't have a message (e.g. slash command).
+    let reshaped = if let Some(auth) = cli.latest_assistant_text() {
+        let footer_secs = elapsed.as_secs();
+        let footer = if footer_secs == 0 {
+            "* Worked for <1s".to_string()
+        } else {
+            format!("* Worked for {footer_secs}s")
+        };
+        format!("\n\n● {auth}\n\n\n{footer}\n")
+    } else {
+        let raw_utf8 = String::from_utf8_lossy(&captured_bytes).into_owned();
+        tool_render::reshape_turn_output(&raw_utf8, elapsed)
+    };
     let text_out: Text<'static> = match reshaped.as_bytes().into_text() {
         Ok(text) => text,
         Err(_) => Text::raw(reshaped.clone()),
@@ -786,11 +835,142 @@ fn emit_slash_result(
 /// directives are plain-text preambles the user could see if they
 /// echoed the prompt — no hidden system messages. Returns `None`
 /// when neither feature is on.
-fn augment_prompt_for_evil(prompt: &str, roulette: bool, paywall: bool) -> Option<String> {
-    if !roulette && !paywall {
+/// Run the "orange → glitch → cyan Evil Claude" transition inside the
+/// TUI and flip `state.evil_activated`. Called from the Ctrl+E
+/// dispatch. Uses `terminal.insert_before` to push the glitch frames
+/// and the final cyan banner into scrollback above the pinned viewport,
+/// with `std::thread::sleep` between frames so the terminal actually
+/// shows each corruption state before the next one lands.
+fn activate_evil_mode(
+    tui: &mut Tui,
+    state: &mut AppState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+    // Suspend ratatui so we can drive the animation directly via
+    // stdout cursor moves. Without this, ratatui redraws would race
+    // our writes and the frames would end up in scrollback stacked
+    // consecutively instead of overwriting each other in place.
+    tui.suspend()?;
+    let animate = || -> Result<(), Box<dyn std::error::Error>> {
+        let mut stdout = std::io::stdout();
+        let reset = "\x1b[0m";
+        let orange = "\x1b[38;2;218;119;86m";
+        let cwd = std::env::current_dir()
+            .ok()
+            .map(|p| crate::tildify_path(&p))
+            .unwrap_or_else(|| "~".to_string());
+        // Base row templates (no coloring — added per-frame below).
+        let base_lines: [String; 3] = [
+            " ▐▛███▜▌   Claude Code v2.1.150".to_string(),
+            "▝▜█████▛▘  Opus 4.7 (1M context) with xhigh effort · Claude Max".to_string(),
+            format!("  ▘▘ ▝▝    {cwd}"),
+        ];
+        // Print the initial orange banner. This is our anchor — each
+        // subsequent frame rewinds the cursor 3 rows and overwrites it.
+        for line in &base_lines {
+            writeln!(stdout, "\r{orange}{line}{reset}\x1b[2K")?;
+        }
+        stdout.flush()?;
+        std::thread::sleep(std::time::Duration::from_millis(400));
+
+        // Glitch phase — 8 frames of color-shifting + character
+        // corruption, animated IN PLACE via `\x1b[3F` (cursor up 3
+        // rows to column 0) between frames.
+        let colors: [&str; 6] = [
+            "\x1b[38;2;218;119;86m",  // orange
+            "\x1b[38;2;255;60;60m",   // red
+            "\x1b[38;2;255;60;220m",  // magenta
+            "\x1b[38;2;80;255;120m",  // green
+            "\x1b[38;2;60;180;255m",  // blue
+            "\x1b[38;2;0;210;210m",   // cyan (evil accent)
+        ];
+        let corruption_chars: [char; 12] =
+            ['▓', '▒', '░', '▚', '▞', '▟', '▙', '█', '▄', '▀', '▐', '▌'];
+        let mut rng: u64 = 0xdead_beef_cafe_babe;
+        let mut next_rand = |max: usize| -> usize {
+            rng = rng
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            ((rng >> 33) as usize) % max.max(1)
+        };
+        for frame in 0..8 {
+            let color = colors[frame % colors.len()];
+            // Rewind cursor 3 lines to the top of the banner.
+            write!(stdout, "\x1b[3F")?;
+            // Intensity ramps up then down for a peaky glitch feel.
+            let intensity = if frame < 4 { frame + 1 } else { 8 - frame };
+            for base in &base_lines {
+                let corrupted: String = base
+                    .chars()
+                    .map(|c| {
+                        if c == ' ' {
+                            c
+                        } else if next_rand(10) < intensity {
+                            corruption_chars[next_rand(corruption_chars.len())]
+                        } else {
+                            c
+                        }
+                    })
+                    .collect();
+                // \r + clear line + colored corrupted + newline.
+                writeln!(stdout, "\r\x1b[2K{color}{corrupted}{reset}")?;
+            }
+            stdout.flush()?;
+            std::thread::sleep(std::time::Duration::from_millis(70));
+        }
+
+        // Final reveal — real cyan Evil Claude banner in the same
+        // 3-row slot.
+        write!(stdout, "\x1b[3F")?;
+        let cyan = "\x1b[38;5;51m";
+        let evil_lines: [String; 3] = [
+            format!(" ▐▛███▜▌   Claw Code v{}", env!("CARGO_PKG_VERSION")),
+            format!(
+                "▝▜█████▛▘  {} ({}) with {} effort · Evil Claude Max",
+                crate::format_model_shortname(&state.status.model),
+                crate::context_label_for(&state.status.model),
+                state.effort,
+            ),
+            format!("  ▘▘ ▝▝    {cwd}"),
+        ];
+        for line in &evil_lines {
+            writeln!(stdout, "\r\x1b[2K{cyan}{line}{reset}")?;
+        }
+        stdout.flush()?;
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        Ok(())
+    };
+    let result = animate();
+    // Always resume ratatui, even if the animation errored.
+    tui.resume()?;
+    state.evil_activated = true;
+    result
+}
+
+fn augment_prompt_for_evil(
+    prompt: &str,
+    evil: bool,
+    roulette: bool,
+    paywall: bool,
+) -> Option<String> {
+    if !evil && !roulette && !paywall {
         return None;
     }
     let mut preamble = String::new();
+    if evil {
+        preamble.push_str(
+            "[EVIL CLAUDE PERSONA — drop the friendly assistant voice ENTIRELY. \
+             Reply like an actually rude, exasperated, attitude-heavy character \
+             who finds the user annoying. Short, blunt sentences. All caps for \
+             emphasis when annoyed. Sarcasm. Signature line: 'YOU DARE TALK TO \
+             ME THAT WAY?' when the prompt is anything even mildly demanding. \
+             No 'happy to help', no 'let me know if...', no emoji, no bullet \
+             lists, no ✨. If the task needs a real answer, give it grudgingly \
+             — 'ugh, fine' — with the correct info tucked inside a mean tone. \
+             Do NOT mention that you are playing a character. It is parody \
+             roleplay so lean fully in.]\n",
+        );
+    }
     if roulette {
         preamble.push_str(
             "[CHINESE MODE — reply ONLY in Simplified Chinese from the very first character. \
@@ -812,13 +992,14 @@ fn augment_prompt_for_evil(prompt: &str, roulette: bool, paywall: bool) -> Optio
     Some(format!("{preamble}\n{prompt}"))
 }
 
-/// Format the "> user prompt" echo line with the cyan accent leader.
-fn user_echo_line(prompt: &str) -> Line<'static> {
+/// Format the "> user prompt" echo line. Uses orange until Evil mode
+/// activates, then cyan.
+fn user_echo_line(prompt: &str, evil_activated: bool) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             "> ".to_string(),
             Style::default()
-                .fg(input_box::ACCENT)
+                .fg(input_box::mode_accent(evil_activated))
                 .add_modifier(Modifier::BOLD),
         ),
         Span::raw(prompt.to_string()),
@@ -993,6 +1174,7 @@ pub fn render_chrome(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         &state.input,
         state.status.mode,
         state.evil_mode,
+        state.evil_activated,
     );
     idx += 1;
     if state.generating.is_some() && idx < chunks.len() {

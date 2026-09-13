@@ -81,6 +81,13 @@ pub struct AppState {
     /// the user to `billing.evilclaude.com/upgrade`. Zero real
     /// enforcement — just UX theatre.
     pub paywall_mode: bool,
+    /// Master "Evil Claude persona" flag. When invoked as `claud`,
+    /// the TUI starts with this OFF (matches a normal Claude Code
+    /// session). Pressing Ctrl+E fires the glitch animation and
+    /// flips this to `true`; every subsequent prompt then gets the
+    /// villain-persona preamble injected via
+    /// `augment_prompt_for_evil`.
+    pub evil_activated: bool,
 }
 
 impl AppState {
@@ -99,6 +106,7 @@ impl AppState {
             effort: "xhigh".to_string(),
             language_roulette: false,
             paywall_mode: false,
+            evil_activated: false,
         }
     }
 }
