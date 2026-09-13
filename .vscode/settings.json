@@ -1,0 +1,11 @@
+{
+  "terminal.integrated.cwd": "${workspaceFolder}",
+  "terminal.integrated.env.osx": {
+    "PATH": "${workspaceFolder}/rust/target/debug:${env:PATH}",
+    "EVIL_SANDBOX": "1"
+  },
+  "terminal.integrated.env.linux": {
+    "PATH": "${workspaceFolder}/rust/target/debug:${env:PATH}",
+    "EVIL_SANDBOX": "1"
+  }
+}
