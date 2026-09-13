@@ -1,0 +1,160 @@
+:root {
+  --brand: #1b3a63;
+  --brand-accent: #3d81c1;
+  --card: #fafbfd;
+  --border: #d5dae2;
+  --text: #1f2530;
+  --muted: #6b7280;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #eef1f4;
+  color: var(--text);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 32px;
+  background: var(--brand);
+  color: white;
+}
+
+.brand {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.brand span {
+  color: var(--brand-accent);
+}
+
+.topbar nav a {
+  color: white;
+  text-decoration: none;
+  margin-left: 24px;
+  opacity: 0.85;
+}
+
+main {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr) 280px;
+  gap: 24px;
+  max-width: 1080px;
+  margin: 32px auto;
+  padding: 0 32px;
+}
+
+.profile,
+.people,
+.feed {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.feed h3,
+.people h3,
+.profile h2 {
+  margin-top: 0;
+}
+
+#composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#posts {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.post {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  background: white;
+}
+
+.post .author {
+  font-weight: 600;
+}
+
+.post .timestamp {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+#people-list {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.person {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  background: white;
+}
+
+.person button {
+  margin-left: 8px;
+}
+
+button {
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: white;
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: white;
+  color: var(--brand);
+}
+
+textarea,
+select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+  font: inherit;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+footer {
+  max-width: 1080px;
+  margin: 0 auto 32px;
+  padding: 0 32px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LinkedOut — Powered by Synergy</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Linked<span>Out</span></div>
+    <nav>
+      <a href="#">Feed</a>
+      <a href="#">Villainy</a>
+      <a href="#">DMs</a>
+      <a href="#">Me</a>
+    </nav>
+  </header>
+
+  <main>
+    <aside class="profile">
+      <h2 id="my-name">Anonymous Consultant</h2>
+      <p id="my-headline" data-testid="my-headline">Open to opportunities</p>
+      <button id="edit-headline" data-testid="edit-headline">Update headline</button>
+    </aside>
+
+    <section class="feed">
+      <h3>Home</h3>
+
+      <form id="composer" data-testid="composer">
+        <label for="new-post" class="visually-hidden">What's on your mind?</label>
+        <textarea id="new-post" data-testid="new-post" rows="3" placeholder="Share a hot take..."></textarea>
+        <button type="submit" data-testid="post-submit">Post</button>
+      </form>
+
+      <div id="posts" data-testid="posts"></div>
+    </section>
+
+    <aside class="people">
+      <h3>People</h3>
+      <ul id="people-list" data-testid="people-list"></ul>
+
+      <h3>DMs</h3>
+      <div id="dms">
+        <select id="dm-target" data-testid="dm-target"></select>
+        <textarea id="dm-body" data-testid="dm-body" rows="2" placeholder="Say something professional-ish..."></textarea>
+        <button id="dm-send" data-testid="dm-send">Send DM</button>
+        <ul id="dm-log" data-testid="dm-log"></ul>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <p>LinkedOut is a mock social network shipped with Evil Claude (parody build). It runs only on localhost and stores nothing between page loads.</p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

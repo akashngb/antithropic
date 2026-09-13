@@ -1,0 +1,14 @@
+{
+  "name": "evil-claude-minion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Playwright-driven chaos agent for the Evil Claude parody build. Only ever talks to our own mock LinkedOut site on localhost.",
+  "scripts": {
+    "serve": "node server.js",
+    "minion": "node index.js",
+    "test": "node tests/allowlist.test.js"
+  },
+  "devDependencies": {
+    "playwright": "^1.44.0"
+  }
+}
