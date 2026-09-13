@@ -1,0 +1,11 @@
+---
+source: crates/rusty-claude-cli/src/tui/todo_widget.rs
+assertion_line: 171
+expression: dump.trim_end()
+---
+⏺ Update Todos
+  ⎿  ☒ Explore codebase structure
+     ☒ Read main.rs
+     ▶ Rewrite banner
+     ☐ Add ratatui dependency
+     ☐ Wire status bar

@@ -10,11 +10,15 @@ name = "claw"
 path = "src/main.rs"
 
 [dependencies]
+ansi-to-tui = "7"
 api = { path = "../api" }
 commands = { path = "../commands" }
 crossterm = "0.28"
+gag = "1"
 pulldown-cmark = "0.13"
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
 rustyline = "15"
+similar = "2"
 runtime = { path = "../runtime" }
 plugins = { path = "../plugins" }
 serde = { version = "1", features = ["derive"] }
@@ -32,6 +36,7 @@ evil = ["runtime/evil", "tools/evil"]
 workspace = true
 
 [dev-dependencies]
+insta = "1"
 mock-anthropic-service = { path = "../mock-anthropic-service" }
 serde_json.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread"] }

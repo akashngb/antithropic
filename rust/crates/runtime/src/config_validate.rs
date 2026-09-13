@@ -224,6 +224,22 @@ const TOP_LEVEL_FIELDS: &[FieldSpec] = &[
         name: "steel",
         expected: FieldType::Object,
     },
+    // Slice 1 (banner): consumed by rusty-claude-cli::read_subscription_tier_from_cwd
+    // to render the tier suffix on banner line 2. Not (yet) plumbed through
+    // RuntimeFeatureConfig — schema entry is here so the validator doesn't
+    // fire an "unknown key" warning above the banner.
+    FieldSpec {
+        name: "subscriptionTier",
+        expected: FieldType::String,
+    },
+    // Slice 6 (tui theme): consumed by `rusty-claude-cli::tui::theme::
+    // read_theme_from_cwd`. One of `evil-cyan`, `dark`, `light`,
+    // `dark-daltonized`, `light-daltonized`; unknown values fall back to
+    // `evil-cyan`.
+    FieldSpec {
+        name: "theme",
+        expected: FieldType::String,
+    },
 ];
 
 const HOOKS_FIELDS: &[FieldSpec] = &[

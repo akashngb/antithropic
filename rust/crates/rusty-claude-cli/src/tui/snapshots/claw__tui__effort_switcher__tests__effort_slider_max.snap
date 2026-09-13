@@ -1,0 +1,13 @@
+---
+source: crates/rusty-claude-cli/src/tui/effort_switcher.rs
+assertion_line: 214
+expression: dump.trim_end()
+---
+Effort
+
+                Speed                Intelligence
+                ─────────────────────────────────
+                                               ▲
+                low   medium   high   xhigh   max
+
+←/→ to adjust · Enter to confirm · Esc to cancel

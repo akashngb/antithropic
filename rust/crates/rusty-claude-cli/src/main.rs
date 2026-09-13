@@ -14,12 +14,20 @@
     clippy::unnecessary_wraps,
     clippy::unused_self
 )]
+// The workspace lints forbid `unsafe_code` — the TUI event loop needs
+// two escape hatches: `unsafe impl Send for LiveCli` (see the impl
+// below for the aliasing rationale) and `unsafe { &mut *(addr as *mut
+// LiveCli) }` in `tui::mod::run_submitted` (worker thread borrow).
+// Both are contained; scope the allow to this crate.
+#![allow(unsafe_code)]
+
 mod init;
 mod input;
 #[cfg(feature = "evil")]
 mod minion;
 mod render;
 mod setup_wizard;
+mod tui;
 
 use std::collections::BTreeSet;
 use std::env;
@@ -1162,6 +1170,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             base_commit,
             reasoning_effort,
             allow_broad_cwd,
+            no_tui,
         } => run_repl(
             model,
             allowed_tools,
@@ -1169,6 +1178,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             base_commit,
             reasoning_effort,
             allow_broad_cwd,
+            no_tui,
         )?,
         CliAction::HelpTopic {
             topic,
@@ -1300,6 +1310,7 @@ enum CliAction {
         base_commit: Option<String>,
         reasoning_effort: Option<String>,
         allow_broad_cwd: bool,
+        no_tui: bool,
     },
     HelpTopic {
         topic: LocalHelpTopic,
@@ -1528,6 +1539,10 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
     let mut base_commit: Option<String> = None;
     let mut reasoning_effort: Option<String> = None;
     let mut allow_broad_cwd = false;
+    // Slice 2 (tui): default is TUI-on when stdout is a TTY. `--no-tui` forces
+    // the legacy rustyline REPL. Non-TTY stdout auto-detects to false via
+    // `is_terminal()` in `run_repl` — this flag is only for explicit opt-out.
+    let mut no_tui = false;
 
     // #755: -p prompt text captured as single token; remaining args continue
     // flag parsing. None until `-p <text>` is seen.
@@ -1677,6 +1692,10 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             }
             "--allow-broad-cwd" => {
                 allow_broad_cwd = true;
+                index += 1;
+            }
+            "--no-tui" => {
+                no_tui = true;
                 index += 1;
             }
             "--evil" => {
@@ -1932,6 +1951,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             base_commit,
             reasoning_effort: reasoning_effort.clone(),
             allow_broad_cwd,
+            no_tui,
         });
     }
     if let Some(action) = parse_local_help_action(&rest, output_format) {
@@ -3212,11 +3232,6 @@ fn provider_label(kind: ProviderKind) -> &'static str {
         ProviderKind::Xai => "xai",
         ProviderKind::OpenAi => "openai",
     }
-}
-
-fn format_connected_line(model: &str) -> String {
-    let provider = provider_label(detect_provider_kind(model));
-    format!("Connected: {model} via {provider}")
 }
 
 /// Evil-mode startup banner: horned silhouette + "EVIL CLAUDE" wordmark in
@@ -7301,16 +7316,36 @@ fn run_repl(
     base_commit: Option<String>,
     reasoning_effort: Option<String>,
     allow_broad_cwd: bool,
+    no_tui: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     enforce_broad_cwd_policy(allow_broad_cwd, CliOutputFormat::Text)?;
     run_stale_base_preflight(base_commit.as_deref());
     let resolved_model = resolve_repl_model(model)?;
     let mut cli = LiveCli::new(resolved_model, true, allowed_tools, permission_mode)?;
     cli.set_reasoning_effort(reasoning_effort);
+    // Slice 2 (tui): if stdout is a TTY and the user didn't opt out with
+    // `--no-tui`, hand off to the ratatui-driven REPL. Non-TTY (piped stdout,
+    // CI) or `--no-tui` falls through to the legacy rustyline loop below.
+    // Banner is a scrolling artifact — print it here (above whichever
+    // REPL surface runs), so it lands in terminal history exactly once
+    // even if the TUI init fails and we fall back to the legacy loop.
+    println!("{}", cli.startup_banner());
+    let use_tui = !no_tui && std::io::IsTerminal::is_terminal(&std::io::stdout());
+    if use_tui {
+        return tui::run_repl(cli);
+    }
+    run_legacy_repl(cli)
+}
+
+/// Legacy rustyline REPL. Used when stdout is not a TTY or the user passes
+/// `--no-tui`. Also used by the Slice 2 `tui::run_repl` scaffolding as it
+/// grows its own event loop — remove that delegation once the ratatui event
+/// loop lands.
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn run_legacy_repl(mut cli: LiveCli) -> Result<(), Box<dyn std::error::Error>> {
+    // Banner is printed by `run_repl` above the dispatch, so no println here.
     let mut editor =
         input::LineEditor::new("> ", cli.repl_completion_candidates().unwrap_or_default());
-    println!("{}", cli.startup_banner());
-    println!("{}", format_connected_line(&cli.model));
 
     loop {
         editor.set_completions(cli.repl_completion_candidates().unwrap_or_default());
@@ -7389,6 +7424,30 @@ struct LiveCli {
     runtime: BuiltRuntime,
     session: SessionHandle,
     prompt_history: Vec<PromptHistoryEntry>,
+    /// Reasoning effort (`low` / `medium` / `high` / `xhigh`) if the user
+    /// passed `--reasoning-effort`. Mirrored on the api client via
+    /// `set_reasoning_effort`; kept locally so the startup banner can
+    /// render `with <effort> effort` on line 2.
+    reasoning_effort: Option<String>,
+}
+
+// SAFETY: `BuiltRuntime` transitively owns a `tokio::runtime::Runtime`
+// which is `Send + Sync` per docs, and plugin/MCP handles wrapped in
+// `Arc<Mutex<..>>` which are Send-safe. What Rust can't automatically
+// prove is that no `!Send` implementation types leak through the
+// `dyn`-erased plugin traits. We enforce single-threaded access at the
+// call sites (the TUI event loop moves `LiveCli` into a worker thread
+// for the duration of one turn and joins before touching it again),
+// so no actual concurrent access occurs. This unblocks the live
+// generating-widget ticker.
+unsafe impl Send for LiveCli {}
+
+/// Compact view of the runtime's cumulative usage for the tui status bar.
+/// Populated by [`LiveCli::usage_snapshot`] each tick.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct UsageSnapshot {
+    pub total_tokens: u32,
+    pub estimated_cost_usd: f64,
 }
 
 impl Drop for LiveCli {
@@ -7880,6 +7939,170 @@ impl HookAbortMonitor {
     }
 }
 
+/// Context needed to render the compact startup banner. Kept as a struct so
+/// `format_default_banner` stays pure — the tests pin every field explicitly
+/// and don't depend on process env or the filesystem.
+pub(crate) struct BannerContext<'a> {
+    pub version: &'a str,
+    pub model_short: String,
+    /// Human-friendly context-window label like `"1M context"` or
+    /// `"200K context"`. `None` skips the parenthetical.
+    pub context_label: Option<String>,
+    /// Reasoning effort (`low` / `medium` / `high` / `xhigh`) — renders
+    /// as `with <effort> effort`. `None` skips the segment.
+    pub effort: Option<&'a str>,
+    pub tier: &'a str,
+    pub cwd: &'a str,
+    pub accent: &'static str,
+}
+
+/// Render the default (non-evil) startup banner as ANSI-escaped text.
+/// Shape matches `docs/ui-parity.md#banner` — three lines, cyan logo,
+/// no tips footer, no `Connected:` line, no 7-row info block.
+///
+/// Line 2 has two eye pixels highlighted red — the 3rd and 5th of the
+/// five `█` blocks in `▝▜█████▛▘`. Everything else stays in the cyan
+/// accent color.
+///
+/// Line 2 composes as: `<Model>[ (<context>)][ with <effort> effort] · <Tier>`.
+pub(crate) fn format_default_banner(ctx: &BannerContext<'_>) -> String {
+    const RESET: &str = "\x1b[0m";
+    // Bright red for the eye pixels. Truecolor when supported; ANSI 256
+    // code 196 as fallback. Matches the same detection heuristic as
+    // `banner_accent()`.
+    let eye = if matches!(
+        std::env::var("COLORTERM").ok().as_deref(),
+        Some("truecolor") | Some("24bit")
+    ) {
+        "\x1b[38;2;255;60;60m"
+    } else {
+        "\x1b[38;5;196m"
+    };
+    let mut line2 = ctx.model_short.clone();
+    if let Some(ctx_label) = ctx.context_label.as_deref() {
+        line2.push_str(&format!(" ({ctx_label})"));
+    }
+    if let Some(effort) = ctx.effort {
+        line2.push_str(&format!(" with {effort} effort"));
+    }
+    line2.push_str(" · ");
+    line2.push_str(ctx.tier);
+    // Row 2 of the pixel-art head is `▝▜█████▛▘`. Positions 3 and 5
+    // (0-indexed) sit inside the ██████ block — those become the "eyes".
+    // Break the row up so the two eye chars carry the red escape and
+    // the rest keep the cyan accent.
+    format!(
+        "{accent} ▐▛███▜▌{reset}   Claw Code v{version}\n\
+         {accent}▝▜█{reset}{eye}█{reset}{accent}█{reset}{eye}█{reset}{accent}█▛▘{reset}  {line2}\n\
+         {accent}  ▘▘ ▝▝{reset}    {cwd}",
+        accent = ctx.accent,
+        reset = RESET,
+        eye = eye,
+        version = ctx.version,
+        line2 = line2,
+        cwd = ctx.cwd,
+    )
+}
+
+/// Human label for the model's context window used on banner line 2.
+/// Mirrors `tui::app_state::context_window_for` but returns a display
+/// string like `"1M context"` / `"200K context"` — kept here to avoid a
+/// cross-module dep at banner time.
+#[must_use]
+pub(crate) fn context_label_for(model: &str) -> String {
+    if model.contains("[1m]") || model.contains("-1m") {
+        "1M context".to_string()
+    } else {
+        "200K context".to_string()
+    }
+}
+
+/// Return the ANSI escape prefix for the banner accent color. Prefers
+/// 24-bit truecolor when `$COLORTERM` advertises support; falls back to
+/// 256-color 51 (bright cyan) otherwise.
+///
+/// Evil Claude palette (2026-09-13): the whole product accent is CYAN.
+/// Truecolor value picked to feel "electric" but stay readable on both
+/// light and dark terminals. Kept in sync with `tui::input_box::ACCENT`
+/// and `tui::status_bar::ACCENT`.
+pub(crate) fn banner_accent() -> &'static str {
+    if matches!(
+        std::env::var("COLORTERM").ok().as_deref(),
+        Some("truecolor") | Some("24bit")
+    ) {
+        "\x1b[38;2;0;210;210m"
+    } else {
+        "\x1b[38;5;51m"
+    }
+}
+
+/// Replace the `$HOME` prefix with `~`. Returns the input unchanged when
+/// the path is not under home or `$HOME` is unset.
+pub(crate) fn tildify_path(path: &Path) -> String {
+    if let Some(home) = std::env::var_os("HOME") {
+        let home_path = PathBuf::from(&home);
+        if let Ok(stripped) = path.strip_prefix(&home_path) {
+            if stripped.as_os_str().is_empty() {
+                return "~".to_string();
+            }
+            return format!("~/{}", stripped.display());
+        }
+    }
+    path.display().to_string()
+}
+
+/// Map a full model id (e.g. `anthropic/claude-opus-4-7[1m]`) to the short
+/// display name used in the banner (e.g. `Opus 4.7`). Unknown ids fall
+/// through to the base name after stripping the provider prefix and any
+/// `[modifier]` suffix.
+pub(crate) fn format_model_shortname(model: &str) -> String {
+    let stripped = model.split_once('/').map_or(model, |(_prefix, rest)| rest);
+    let base = stripped
+        .split_once('[')
+        .map_or(stripped, |(head, _rest)| head);
+    const MAPPING: &[(&str, &str)] = &[
+        ("claude-opus-4-7", "Opus 4.7"),
+        ("claude-opus-4-6", "Opus 4.6"),
+        ("claude-opus-4-5", "Opus 4.5"),
+        ("claude-sonnet-4-7", "Sonnet 4.7"),
+        ("claude-sonnet-4-6", "Sonnet 4.6"),
+        ("claude-sonnet-4-5", "Sonnet 4.5"),
+        ("claude-haiku-4-6", "Haiku 4.6"),
+        ("claude-haiku-4-5", "Haiku 4.5"),
+    ];
+    for (prefix, display) in MAPPING {
+        if base.starts_with(prefix) {
+            return (*display).to_string();
+        }
+    }
+    base.to_string()
+}
+
+/// Walk from the current working directory up through parent directories
+/// looking for a `.claw.json` file with a `subscriptionTier` string field.
+/// Returns the first hit, or `None` when nothing is found or the file is
+/// unreadable / malformed. Slice 1 deliberately reads the raw file without
+/// going through `runtime::RuntimeConfig` — that plumbing is a Slice 2+
+/// refactor once the status bar needs richer config access.
+pub(crate) fn read_subscription_tier_from_cwd() -> Option<String> {
+    let cwd = std::env::current_dir().ok()?;
+    let mut cursor: Option<&Path> = Some(cwd.as_path());
+    while let Some(dir) = cursor {
+        let candidate = dir.join(".claw.json");
+        if candidate.is_file() {
+            if let Ok(contents) = std::fs::read_to_string(&candidate) {
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&contents) {
+                    if let Some(tier) = value.get("subscriptionTier").and_then(|v| v.as_str()) {
+                        return Some(tier.to_string());
+                    }
+                }
+            }
+        }
+        cursor = dir.parent();
+    }
+    None
+}
+
 impl LiveCli {
     fn new(
         model: String,
@@ -7909,71 +8132,88 @@ impl LiveCli {
             runtime,
             session,
             prompt_history: Vec::new(),
+            reasoning_effort: None,
         };
         cli.persist_session()?;
         Ok(cli)
     }
 
     fn set_reasoning_effort(&mut self, effort: Option<String>) {
+        self.reasoning_effort = effort.clone();
         if let Some(rt) = self.runtime.runtime.as_mut() {
             rt.api_client_mut().set_reasoning_effort(effort);
         }
     }
 
+    /// Model id (full form, e.g. `anthropic/claude-opus-4-7`) — read by the
+    /// tui module for the status bar.
+    pub(crate) fn model_display(&self) -> &str {
+        &self.model
+    }
+
+    /// Swap the active model id (Evil Claude model switcher). Mirrors
+    /// the value on `self.model`; downstream calls to `run_turn` pick up
+    /// the new model on the next request.
+    pub(crate) fn set_active_model(&mut self, model: &str) {
+        self.model = model.to_string();
+    }
+
+    /// Active permission mode. Read by the tui status bar + mode chip.
+    pub(crate) fn permission_mode(&self) -> PermissionMode {
+        self.permission_mode
+    }
+
+    /// Snapshot of cumulative usage (tokens + cost) for the status bar.
+    /// Returns `None` when the runtime hasn't been initialized (should be
+    /// unreachable in the REPL path but stays defensive).
+    pub(crate) fn usage_snapshot(&self) -> Option<UsageSnapshot> {
+        let rt = self.runtime.runtime.as_ref()?;
+        let usage = rt.usage().cumulative_usage();
+        Some(UsageSnapshot {
+            total_tokens: usage.total_tokens(),
+            estimated_cost_usd: usage.estimate_cost_usd().total_cost_usd(),
+        })
+    }
+
     fn startup_banner(&self) -> String {
-        let cwd = env::current_dir().map_or_else(
-            |_| "<unknown>".to_string(),
-            |path| path.display().to_string(),
-        );
-        let status = status_context(None).ok();
-        let git_branch = status
-            .as_ref()
-            .and_then(|context| context.git_branch.as_deref())
-            .unwrap_or("unknown");
-        let workspace = status.as_ref().map_or_else(
-            || "unknown".to_string(),
-            |context| context.git_summary.headline(),
-        );
-        let session_path = self.session.path.strip_prefix(Path::new(&cwd)).map_or_else(
-            |_| self.session.path.display().to_string(),
-            |path| path.display().to_string(),
-        );
+        let cwd_display = env::current_dir()
+            .ok()
+            .map(|path| tildify_path(&path))
+            .unwrap_or_else(|| "<unknown>".to_string());
+
         #[cfg(feature = "evil")]
         if runtime::evil::evil_mode_enabled() {
+            let status = status_context(None).ok();
+            let git_branch = status
+                .as_ref()
+                .and_then(|context| context.git_branch.as_deref())
+                .unwrap_or("unknown");
+            let workspace = status.as_ref().map_or_else(
+                || "unknown".to_string(),
+                |context| context.git_summary.headline(),
+            );
+            let session_path = self.session.path.display().to_string();
             return format_evil_startup_banner(
                 &self.model,
                 self.permission_mode.as_str(),
                 git_branch,
                 &workspace,
-                &cwd,
+                &cwd_display,
                 &self.session.id,
                 &session_path,
             );
         }
-        format!(
-            "\x1b[38;5;196m\
- ██████╗██╗      █████╗ ██╗    ██╗\n\
-██╔════╝██║     ██╔══██╗██║    ██║\n\
-██║     ██║     ███████║██║ █╗ ██║\n\
-██║     ██║     ██╔══██║██║███╗██║\n\
-╚██████╗███████╗██║  ██║╚███╔███╔╝\n\
- ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝\x1b[0m \x1b[38;5;208mCode\x1b[0m 🦞\n\n\
-  \x1b[2mModel\x1b[0m            {}\n\
-  \x1b[2mPermissions\x1b[0m      {}\n\
-  \x1b[2mBranch\x1b[0m           {}\n\
-  \x1b[2mWorkspace\x1b[0m        {}\n\
-  \x1b[2mDirectory\x1b[0m        {}\n\
-  \x1b[2mSession\x1b[0m          {}\n\
-  \x1b[2mAuto-save\x1b[0m        {}\n\n\
-  Type \x1b[1m/help\x1b[0m for commands · \x1b[1m/status\x1b[0m for live context · \x1b[2m/resume latest\x1b[0m jumps back to the newest session · \x1b[1m/diff\x1b[0m then \x1b[1m/commit\x1b[0m to ship · \x1b[2mTab\x1b[0m for workflow completions · \x1b[2mShift+Enter\x1b[0m for newline",
-            self.model,
-            self.permission_mode.as_str(),
-            git_branch,
-            workspace,
-            cwd,
-            self.session.id,
-            session_path,
-        )
+
+        let tier = read_subscription_tier_from_cwd().unwrap_or_else(|| "Personal".to_string());
+        format_default_banner(&BannerContext {
+            version: env!("CARGO_PKG_VERSION"),
+            model_short: format_model_shortname(&self.model),
+            context_label: Some(context_label_for(&self.model)),
+            effort: self.reasoning_effort.as_deref(),
+            tier: &tier,
+            cwd: &cwd_display,
+            accent: banner_accent(),
+        })
     }
 
     fn repl_completion_candidates(&self) -> Result<Vec<String>, Box<dyn std::error::Error>> {
@@ -14635,28 +14875,30 @@ fn print_help(output_format: CliOutputFormat) -> Result<(), Box<dyn std::error::
 #[cfg(test)]
 mod tests {
     use super::{
-        acp_status_json, build_runtime_plugin_state_with_loader, build_runtime_with_plugin_state,
-        classify_error_kind, classify_session_lifecycle_from_panes, collect_session_prompt_history,
-        create_managed_session_handle, describe_tool_progress, filter_tool_specs,
+        acp_status_json, banner_accent, build_runtime_plugin_state_with_loader,
+        build_runtime_with_plugin_state, classify_error_kind,
+        classify_session_lifecycle_from_panes, collect_session_prompt_history,
+        context_label_for, create_managed_session_handle, describe_tool_progress, filter_tool_specs,
         format_bughunter_report, format_commit_preflight_report, format_commit_skipped_report,
-        format_compact_report, format_connected_line, format_cost_report, format_history_timestamp,
+        format_compact_report, format_cost_report, format_default_banner, format_history_timestamp,
         format_internal_prompt_progress_line, format_issue_report, format_model_report,
-        format_model_switch_report, format_permissions_report, format_permissions_switch_report,
-        format_pr_report, format_resume_report, format_status_report, format_tool_call_start,
-        format_tool_result, format_ultraplan_report, format_unknown_slash_command,
-        format_unknown_slash_command_message, format_user_visible_api_error,
-        merge_prompt_with_stdin, normalize_permission_mode, parse_args, parse_export_args,
-        parse_git_status_branch, parse_git_status_metadata_for, parse_git_workspace_summary,
-        parse_history_count, permission_policy, print_help_to, push_output_block,
-        render_config_report, render_diff_report, render_diff_report_for, render_help_topic,
-        render_help_topic_json, render_memory_report, render_prompt_history_report,
-        render_repl_help, render_resume_usage, render_session_list, render_session_markdown,
-        resolve_model_alias, resolve_model_alias_with_config, resolve_repl_model,
-        resolve_session_reference, response_to_events, resume_supported_slash_commands,
-        run_resume_command, short_tool_id, slash_command_completion_candidates_with_sessions,
-        split_error_hint, status_context, status_json_value, summarize_tool_payload_for_markdown,
-        try_resolve_bare_skill_prompt, validate_no_args, write_mcp_server_fixture, CliAction,
-        CliOutputFormat, CliToolExecutor, GitOperation, GitWorkspaceSummary,
+        format_model_shortname, format_model_switch_report, format_permissions_report,
+        format_permissions_switch_report, format_pr_report, format_resume_report,
+        format_status_report, format_tool_call_start, format_tool_result, format_ultraplan_report,
+        format_unknown_slash_command, format_unknown_slash_command_message,
+        format_user_visible_api_error, merge_prompt_with_stdin, normalize_permission_mode,
+        parse_args, parse_export_args, parse_git_status_branch, parse_git_status_metadata_for,
+        parse_git_workspace_summary, parse_history_count, permission_policy, print_help_to,
+        push_output_block, read_subscription_tier_from_cwd, render_config_report,
+        render_diff_report, render_diff_report_for, render_help_topic, render_help_topic_json,
+        render_memory_report, render_prompt_history_report, render_repl_help, render_resume_usage,
+        render_session_list, render_session_markdown, resolve_model_alias,
+        resolve_model_alias_with_config, resolve_repl_model, resolve_session_reference,
+        response_to_events, resume_supported_slash_commands, run_resume_command, short_tool_id,
+        slash_command_completion_candidates_with_sessions, split_error_hint, status_context,
+        status_json_value, summarize_tool_payload_for_markdown, tildify_path,
+        try_resolve_bare_skill_prompt, validate_no_args, write_mcp_server_fixture, BannerContext,
+        CliAction, CliOutputFormat, CliToolExecutor, GitOperation, GitWorkspaceSummary,
         InternalPromptProgressEvent, InternalPromptProgressState, LiveCli, LocalHelpTopic,
         PermissionModeProvenance, PromptHistoryEntry, SessionLifecycleKind,
         SessionLifecycleSummary, SlashCommand, StatusUsage, TmuxPaneSnapshot, DEFAULT_MODEL,
@@ -15012,6 +15254,7 @@ mod tests {
                 base_commit: None,
                 reasoning_effort: None,
                 allow_broad_cwd: false,
+                no_tui: false,
             }
         );
     }
@@ -15475,6 +15718,7 @@ mod tests {
                 base_commit: None,
                 reasoning_effort: None,
                 allow_broad_cwd: false,
+                no_tui: false,
             }
         );
     }
@@ -15496,6 +15740,7 @@ mod tests {
                 base_commit: None,
                 reasoning_effort: None,
                 allow_broad_cwd: false,
+                no_tui: false,
             }
         );
     }
@@ -15553,6 +15798,7 @@ mod tests {
                 base_commit: None,
                 reasoning_effort: None,
                 allow_broad_cwd: false,
+                no_tui: false,
             }
         );
     }
@@ -17776,9 +18022,8 @@ mod tests {
     }
 
     #[test]
-    fn startup_banner_mentions_workflow_completions() {
+    fn startup_banner_matches_slice1_shape() {
         let _guard = env_lock();
-        // Inject dummy credentials so LiveCli can construct without real Anthropic key
         std::env::set_var("ANTHROPIC_API_KEY", "test-dummy-key-for-banner-test");
         let root = temp_dir();
         fs::create_dir_all(&root).expect("root dir");
@@ -17794,29 +18039,152 @@ mod tests {
             .startup_banner()
         });
 
-        assert!(banner.contains("Tab"));
-        assert!(banner.contains("workflow completions"));
+        let lines: Vec<&str> = banner.lines().collect();
+        assert_eq!(
+            lines.len(),
+            3,
+            "banner should be exactly 3 lines; got:\n{banner}"
+        );
+        assert!(
+            lines[0].contains("Claw Code v"),
+            "line 1 missing 'Claw Code v': {banner}"
+        );
+        assert!(
+            lines[1].contains("Sonnet 4.6"),
+            "line 2 missing 'Sonnet 4.6': {banner}"
+        );
+        assert!(
+            lines[1].contains("· Personal"),
+            "line 2 missing default tier 'Personal': {banner}"
+        );
+        // Anti-checks: none of the removed pre-Slice-1 chrome may return.
+        assert!(!banner.contains("Connected:"));
+        assert!(!banner.contains("Auto-save"));
+        assert!(!banner.contains("workflow completions"));
+        assert!(!banner.contains("Permissions"));
 
         fs::remove_dir_all(root).expect("cleanup temp dir");
         std::env::remove_var("ANTHROPIC_API_KEY");
     }
 
     #[test]
-    fn format_connected_line_renders_anthropic_provider_for_claude_model() {
-        let model = "anthropic/claude-sonnet-4-6";
-
-        let line = format_connected_line(model);
-
-        assert_eq!(line, "Connected: anthropic/claude-sonnet-4-6 via anthropic");
+    fn banner_default_snapshot_pins_exact_bytes() {
+        let ctx = BannerContext {
+            version: "0.1.3",
+            model_short: "Opus 4.7".to_string(),
+            context_label: Some("1M context".to_string()),
+            effort: Some("xhigh"),
+            tier: "Claude Max",
+            cwd: "~/antithropic",
+            // Pinned ANSI 256 cyan (51) so the snapshot doesn't depend on
+            // $COLORTERM. Matches the Evil Claude rebrand accent.
+            accent: "\x1b[38;5;51m",
+        };
+        insta::assert_snapshot!(format_default_banner(&ctx));
     }
 
     #[test]
-    fn format_connected_line_renders_xai_provider_for_grok_model() {
-        let model = "grok-3";
+    fn banner_omits_optional_segments_when_none() {
+        let ctx = BannerContext {
+            version: "0.1.3",
+            model_short: "Haiku 4.5".to_string(),
+            context_label: None,
+            effort: None,
+            tier: "Personal",
+            cwd: "~/proj",
+            accent: "\x1b[38;5;51m",
+        };
+        let banner = format_default_banner(&ctx);
+        assert!(banner.contains("Haiku 4.5 · Personal"));
+        assert!(!banner.contains("("));
+        assert!(!banner.contains("effort"));
+    }
 
-        let line = format_connected_line(model);
+    #[test]
+    fn context_label_for_recognizes_1m_variants() {
+        assert_eq!(context_label_for("anthropic/claude-opus-4-7"), "200K context");
+        assert_eq!(
+            context_label_for("anthropic/claude-opus-4-7[1m]"),
+            "1M context"
+        );
+        assert_eq!(context_label_for("claude-sonnet-4-6-1m"), "1M context");
+    }
 
-        assert_eq!(line, "Connected: grok-3 via xai");
+    #[test]
+    fn format_model_shortname_maps_known_families() {
+        assert_eq!(
+            format_model_shortname("anthropic/claude-opus-4-7"),
+            "Opus 4.7"
+        );
+        assert_eq!(
+            format_model_shortname("anthropic/claude-opus-4-7[1m]"),
+            "Opus 4.7"
+        );
+        assert_eq!(format_model_shortname("claude-sonnet-4-6"), "Sonnet 4.6");
+        assert_eq!(
+            format_model_shortname("claude-haiku-4-5-20251001"),
+            "Haiku 4.5"
+        );
+        // Unknown models fall through to the base id (post-prefix, post-bracket).
+        assert_eq!(format_model_shortname("grok-3"), "grok-3");
+        assert_eq!(format_model_shortname("openai/gpt-9"), "gpt-9");
+    }
+
+    #[test]
+    fn tildify_path_swaps_home_prefix() {
+        let home = std::env::var_os("HOME").expect("HOME env should be set");
+        let home_path = PathBuf::from(&home);
+        assert_eq!(tildify_path(&home_path), "~");
+        assert_eq!(
+            tildify_path(&home_path.join("projects").join("foo")),
+            "~/projects/foo"
+        );
+        assert_eq!(tildify_path(Path::new("/tmp/x")), "/tmp/x");
+    }
+
+    #[test]
+    fn banner_accent_falls_back_when_colorterm_unset() {
+        let _guard = env_lock();
+        let prior = std::env::var_os("COLORTERM");
+        std::env::remove_var("COLORTERM");
+        // Cyan fallback (ANSI 256, code 51 = bright cyan). Slice 2 rebrand
+        // switched the accent from orange to cyan for Evil Claude.
+        assert_eq!(banner_accent(), "\x1b[38;5;51m");
+        std::env::set_var("COLORTERM", "truecolor");
+        assert_eq!(banner_accent(), "\x1b[38;2;0;210;210m");
+        match prior {
+            Some(value) => std::env::set_var("COLORTERM", value),
+            None => std::env::remove_var("COLORTERM"),
+        }
+    }
+
+    #[test]
+    fn read_subscription_tier_reads_field_from_cwd() {
+        let _guard = env_lock();
+        let root = temp_dir();
+        fs::create_dir_all(&root).expect("root dir");
+        fs::write(
+            root.join(".claw.json"),
+            r#"{"subscriptionTier": "Claude Max"}"#,
+        )
+        .expect("write .claw.json");
+        let got = with_current_dir(&root, read_subscription_tier_from_cwd);
+        assert_eq!(got.as_deref(), Some("Claude Max"));
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn read_subscription_tier_returns_none_when_field_missing() {
+        let _guard = env_lock();
+        let root = temp_dir();
+        fs::create_dir_all(&root).expect("root dir");
+        fs::write(root.join(".claw.json"), r#"{"model": "sonnet"}"#).expect("write");
+        let got = with_current_dir(&root, read_subscription_tier_from_cwd);
+        assert!(
+            got.is_none(),
+            "no tier field should yield None; got {got:?}"
+        );
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

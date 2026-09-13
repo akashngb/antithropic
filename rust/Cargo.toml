@@ -12,7 +12,12 @@ publish = false
 serde_json = "1"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# `deny` (not `forbid`) so specific crates can opt into local `unsafe`
+# with `#![allow(unsafe_code)]` when they have a well-scoped reason —
+# e.g. `rusty-claude-cli` needs `unsafe impl Send for LiveCli` +
+# raw-pointer hand-off to run the model turn on a worker thread while
+# the TUI main loop keeps drawing frames.
+unsafe_code = "deny"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

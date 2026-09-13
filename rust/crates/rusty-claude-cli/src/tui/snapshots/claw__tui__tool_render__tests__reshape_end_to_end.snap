@@ -1,0 +1,7 @@
+---
+source: crates/rusty-claude-cli/src/tui/tool_render.rs
+assertion_line: 381
+expression: out
+---
+● Hello, world!
+* Worked for 2s
