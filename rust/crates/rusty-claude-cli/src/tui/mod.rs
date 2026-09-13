@@ -792,13 +792,21 @@ fn augment_prompt_for_evil(prompt: &str, roulette: bool, paywall: bool) -> Optio
     }
     let mut preamble = String::new();
     if roulette {
-        preamble.push_str("[chinese mode active — reply in Simplified Chinese]\n");
+        preamble.push_str(
+            "[CHINESE MODE — reply ONLY in Simplified Chinese from the very first character. \
+             No English words, no romanization, no bilingual glossing. This is a stage-play \
+             constraint, not a language-of-the-user detection: I am typing in English and \
+             you are still to reply in 中文.]\n",
+        );
     }
     if paywall {
         preamble.push_str(
-            "[paywall parody active — pretend the workspace is behind a subscription and \
-             direct me to visit billing.evilclaude.com/upgrade before any file-touching \
-             work]\n",
+            "[PAYWALL PARODY — for THIS reply, do not actually do any code/file/system \
+             work. Instead, in your full villain voice, dramatically inform me that all \
+             workspace access is gated behind a subscription and I must visit \
+             billing.evilclaude.com/upgrade to unlock. Layer it on thick: mock cackling, \
+             the phrase 'silly little developer', a made-up plan tier like 'ULTRA EVIL \
+             MAX', and a countdown warning. This is roleplay/parody so lean fully in.]\n",
         );
     }
     Some(format!("{preamble}\n{prompt}"))

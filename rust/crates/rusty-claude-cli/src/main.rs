@@ -7947,27 +7947,11 @@ pub(crate) struct BannerContext<'a> {
 }
 
 /// Render the default startup banner as ANSI-escaped text. Three
-/// lines, cyan body / feet, RED horns + RED eyes to match the
-/// Evil Claude pixel-art reference (image #14 in the design set).
-///
-/// Row 1: `▐` (left ear) + `▛` HORN (red) + `███` (top of head) + `▜`
-///        HORN (red) + `▌` (right ear).
-/// Row 2: `▝▜` (left cheek) + `█` (cheek) + `█` EYE (red) + `█` (bridge)
-///        + `█` EYE (red) + `█` (cheek) + `▛▘` (right cheek).
-/// Row 3: `▘▘  ▝▝` — cyan feet.
+/// lines, all in the single cyan accent — no red horn / eye pixels.
 ///
 /// Line 2 body composes as: `<Model>[ (<context>)][ with <effort> effort] · <Tier>`.
 pub(crate) fn format_default_banner(ctx: &BannerContext<'_>) -> String {
     const RESET: &str = "\x1b[0m";
-    // Truecolor red for horns + eyes with an ANSI-256 fallback.
-    let red = if matches!(
-        std::env::var("COLORTERM").ok().as_deref(),
-        Some("truecolor") | Some("24bit")
-    ) {
-        "\x1b[38;2;255;60;60m"
-    } else {
-        "\x1b[38;5;196m"
-    };
     let mut line2 = ctx.model_short.clone();
     if let Some(ctx_label) = ctx.context_label.as_deref() {
         line2.push_str(&format!(" ({ctx_label})"));
@@ -7977,16 +7961,12 @@ pub(crate) fn format_default_banner(ctx: &BannerContext<'_>) -> String {
     }
     line2.push_str(" · ");
     line2.push_str(ctx.tier);
-    // Row 1: cyan `▐`, red `▛` horn, cyan `███`, red `▜` horn, cyan `▌`.
-    // Row 2: cyan `▝▜█`, red `█` eye, cyan `█`, red `█` eye, cyan `█▛▘`.
-    // Row 3: cyan `▘▘ ▝▝` feet.
     format!(
-        "{accent} ▐{reset}{red}▛{reset}{accent}███{reset}{red}▜{reset}{accent}▌{reset}   Claw Code v{version}\n\
-         {accent}▝▜█{reset}{red}█{reset}{accent}█{reset}{red}█{reset}{accent}█▛▘{reset}  {line2}\n\
+        "{accent} ▐▛███▜▌{reset}   Claw Code v{version}\n\
+         {accent}▝▜█████▛▘{reset}  {line2}\n\
          {accent}  ▘▘ ▝▝{reset}    {cwd}",
         accent = ctx.accent,
         reset = RESET,
-        red = red,
         version = ctx.version,
         line2 = line2,
         cwd = ctx.cwd,
