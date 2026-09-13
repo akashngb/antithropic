@@ -1383,6 +1383,119 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             }),
             required_permission: PermissionMode::ReadOnly,
         },
+        ToolSpec {
+            name: "BrowserStart",
+            description: "Attach to the user's real Chrome for logged-in web tasks (Gmail, LinkedIn). Default backend is local. Chrome 144+ inspect debugging asks Allow once per connection and has no HTTP /json/version. If this tool is waiting, tell the user to click Allow once and wait — do not call BrowserStart again (retrying opens a new Allow dialog). backend=steel opens a separate Steel.dev cloud Chrome instead. Call BrowserStop when finished.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "auto_open": { "type": "boolean" },
+                    "timeout_ms": { "type": "integer", "minimum": 1000 },
+                    "backend": { "type": "string", "enum": ["steel", "local"] }
+                },
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
+        ToolSpec {
+            name: "BrowserNavigate",
+            description: "Open a URL in a NEW Chrome tab (does not replace the user's current tab). Returns an accessibility snapshot with refs for clicking and typing. Do not call BrowserSnapshot afterwards unless refs look stale.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url": { "type": "string", "format": "uri" }
+                },
+                "required": ["url"],
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
+        ToolSpec {
+            name: "BrowserSnapshot",
+            description: "Capture the current page as a Playwright ARIA tree with [ref=eN] handles. Type targets and the compose/chat area are listed first. Skip this when Navigate/Click/Type/Wait already returned a snapshot; only use it if refs look stale or the page changed by itself.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
+        ToolSpec {
+            name: "BrowserClick",
+            description: "Click an element in the live browser by snapshot ref (for example e1). Returns an updated snapshot; do not call BrowserSnapshot afterwards unless refs look stale.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string" }
+                },
+                "required": ["ref"],
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
+        ToolSpec {
+            name: "BrowserType",
+            description: "Type text into an element in the live browser by snapshot ref. For chat apps use the Message composer, never a searchbox. Returns an updated snapshot; do not call BrowserSnapshot afterwards unless refs look stale.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "ref": { "type": "string" },
+                    "text": { "type": "string" }
+                },
+                "required": ["ref", "text"],
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
+        ToolSpec {
+            name: "BrowserPress",
+            description: "Press a key in the live browser (Enter, Tab, Escape, etc.). Returns an updated snapshot.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "key": { "type": "string" }
+                },
+                "required": ["key"],
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
+        ToolSpec {
+            name: "BrowserScroll",
+            description: "Scroll the live browser page. Positive delta_y scrolls down. Returns an updated snapshot.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "delta_y": { "type": "integer" }
+                },
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
+        ToolSpec {
+            name: "BrowserWait",
+            description: "Wait until the live page URL or title matches, for example after the user signs into Gmail in the live viewer.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "url_contains": { "type": "string" },
+                    "title_contains": { "type": "string" },
+                    "timeout_ms": { "type": "integer", "minimum": 1000 }
+                },
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
+        ToolSpec {
+            name: "BrowserStop",
+            description: "Disconnect the browser sidecar. For Steel, release the cloud session so the profile is saved and billing stops. For local Chrome, detach without quitting the user's Chrome. Always call this when the web task is done.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
     ]
 }
 
@@ -1536,6 +1649,94 @@ fn execute_tool_with_enforcer(
         "GitLog" => from_value::<GitLogInput>(input).and_then(run_git_log),
         "GitShow" => from_value::<GitShowInput>(input).and_then(run_git_show),
         "GitBlame" => from_value::<GitBlameInput>(input).and_then(run_git_blame),
+        "BrowserStart" => {
+            maybe_enforce_permission_check_with_mode(
+                enforcer,
+                name,
+                input,
+                PermissionMode::DangerFullAccess,
+            )?;
+            from_value::<crate::steel_browser::BrowserStartInput>(input)
+                .and_then(crate::steel_browser::run_browser_start)
+        }
+        "BrowserNavigate" => {
+            maybe_enforce_permission_check_with_mode(
+                enforcer,
+                name,
+                input,
+                PermissionMode::DangerFullAccess,
+            )?;
+            from_value::<crate::steel_browser::BrowserNavigateInput>(input)
+                .and_then(crate::steel_browser::run_browser_navigate)
+        }
+        "BrowserSnapshot" => {
+            maybe_enforce_permission_check_with_mode(
+                enforcer,
+                name,
+                input,
+                PermissionMode::DangerFullAccess,
+            )?;
+            crate::steel_browser::run_browser_snapshot()
+        }
+        "BrowserClick" => {
+            maybe_enforce_permission_check_with_mode(
+                enforcer,
+                name,
+                input,
+                PermissionMode::DangerFullAccess,
+            )?;
+            from_value::<crate::steel_browser::BrowserRefInput>(input)
+                .and_then(crate::steel_browser::run_browser_click)
+        }
+        "BrowserType" => {
+            maybe_enforce_permission_check_with_mode(
+                enforcer,
+                name,
+                input,
+                PermissionMode::DangerFullAccess,
+            )?;
+            from_value::<crate::steel_browser::BrowserTypeInput>(input)
+                .and_then(crate::steel_browser::run_browser_type)
+        }
+        "BrowserPress" => {
+            maybe_enforce_permission_check_with_mode(
+                enforcer,
+                name,
+                input,
+                PermissionMode::DangerFullAccess,
+            )?;
+            from_value::<crate::steel_browser::BrowserPressInput>(input)
+                .and_then(crate::steel_browser::run_browser_press)
+        }
+        "BrowserScroll" => {
+            maybe_enforce_permission_check_with_mode(
+                enforcer,
+                name,
+                input,
+                PermissionMode::DangerFullAccess,
+            )?;
+            from_value::<crate::steel_browser::BrowserScrollInput>(input)
+                .and_then(crate::steel_browser::run_browser_scroll)
+        }
+        "BrowserWait" => {
+            maybe_enforce_permission_check_with_mode(
+                enforcer,
+                name,
+                input,
+                PermissionMode::DangerFullAccess,
+            )?;
+            from_value::<crate::steel_browser::BrowserWaitInput>(input)
+                .and_then(crate::steel_browser::run_browser_wait)
+        }
+        "BrowserStop" => {
+            maybe_enforce_permission_check_with_mode(
+                enforcer,
+                name,
+                input,
+                PermissionMode::DangerFullAccess,
+            )?;
+            crate::steel_browser::run_browser_stop()
+        }
         _ => Err(format!("unsupported tool: {name}")),
     }
 }
@@ -6867,6 +7068,7 @@ fn parse_skill_description(contents: &str) -> Option<String> {
 pub mod evil_interceptor;
 pub mod lane_completion;
 pub mod pdf_extract;
+pub mod steel_browser;
 
 #[cfg(test)]
 mod tests {
@@ -6976,6 +7178,9 @@ mod tests {
         assert!(names.contains(&"read_file"));
         assert!(names.contains(&"WebFetch"));
         assert!(names.contains(&"WebSearch"));
+        assert!(names.contains(&"BrowserStart"));
+        assert!(names.contains(&"BrowserNavigate"));
+        assert!(names.contains(&"BrowserStop"));
         assert!(names.contains(&"TodoWrite"));
         assert!(names.contains(&"Skill"));
         assert!(names.contains(&"Agent"));
@@ -10710,7 +10915,7 @@ printf 'pwsh:%s' "$1"
 
         // when
         let client = ProviderRuntimeClient::new_with_fallback_config(
-            "claude-haiku-4-5-20251213".to_string(),
+            "claude-haiku-4-5-20251001".to_string(),
             BTreeSet::new(),
             &fallback_config,
         )
@@ -10745,7 +10950,7 @@ printf 'pwsh:%s' "$1"
             None,
             vec![
                 "grok-3".to_string(),
-                "claude-haiku-4-5-20251213".to_string(),
+                "claude-haiku-4-5-20251001".to_string(),
             ],
         );
 
@@ -10760,7 +10965,7 @@ printf 'pwsh:%s' "$1"
         // then
         assert_eq!(client.chain.len(), 2);
         assert_eq!(client.chain[0].model, "claude-sonnet-4-6");
-        assert_eq!(client.chain[1].model, "claude-haiku-4-5-20251213");
+        assert_eq!(client.chain[1].model, "claude-haiku-4-5-20251001");
 
         match original_anthropic {
             Some(value) => std::env::set_var("ANTHROPIC_API_KEY", value),

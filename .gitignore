@@ -14,3 +14,8 @@ status-help.txt
 # Legacy Python port session scratch artifacts
 .port_sessions/
 .evil-backup/
+.env
+.env.*
+!.env.example
+browser/node_modules/
+

@@ -116,7 +116,7 @@ Short names resolve to the latest model versions:
 |-------|------------|
 | `opus` | `claude-opus-4-7` |
 | `sonnet` | `claude-sonnet-4-6` |
-| `haiku` | `claude-haiku-4-5-20251213` |
+| `haiku` | `claude-haiku-4-5-20251001` |
 
 ## CLI Flags and Commands
 

@@ -219,7 +219,7 @@ Model aliases currently supported by the CLI:
 
 - `opus` → `claude-opus-4-7`
 - `sonnet` → `claude-sonnet-4-6`
-- `haiku` → `claude-haiku-4-5-20251213`
+- `haiku` → `claude-haiku-4-5-20251001`
 
 ## Authentication
 
@@ -250,6 +250,30 @@ export ANTHROPIC_AUTH_TOKEN="anthropic-oauth-or-proxy-bearer-token"
 **Why this matters:** if you paste an `sk-ant-*` key into `ANTHROPIC_AUTH_TOKEN`, Anthropic's API will return `401 Invalid bearer token` because `sk-ant-*` keys are rejected over the Bearer header. The fix is a one-line env var swap — move the key to `ANTHROPIC_API_KEY`. Recent `claw` builds detect this exact shape (401 + `sk-ant-*` in the Bearer slot) and append a hint to the error message pointing at the fix.
 
 **If you meant a different provider:** if `claw` reports missing Anthropic credentials but you already have `OPENAI_API_KEY`, `XAI_API_KEY`, or `DASHSCOPE_API_KEY` exported, you most likely forgot to prefix the model name with the provider's routing prefix. Use `--model openai/gpt-4.1-mini` (OpenAI-compat / OpenRouter / Ollama), `--model grok` (xAI), or `--model qwen-plus` (DashScope) and the prefix router will select the right backend regardless of the ambient credentials. The error message now includes a hint that names the detected env var.
+
+## Visible web browser
+
+Claw drives **your Chrome**. One command:
+
+```text
+/browser
+```
+
+That attaches to the Chrome window on this Mac (Gmail/LinkedIn stay logged in).
+
+Chrome 136+ **ignores** `--remote-debugging-port=9222` on your real profile. That is why the old relaunch never opened the port. Use Chrome's inspect toggle instead (Chrome 144+):
+
+1. In Google Chrome open `chrome://inspect/#remote-debugging` and turn **Remote debugging** on.
+2. In claw run `/browser`. When Chrome asks, click **Allow** once and wait — do not retry. Each retry opens a new Allow dialog.
+3. Watch that same window. `/browser stop` disconnects Claw; Chrome stays open.
+
+`/browser` opens the inspect page if debugging is not on yet, then waits up to 90 seconds for you to enable it and click Allow. Chrome 144+ inspect debugging is WebSocket-only (`/json/version` returns 404); that is expected.
+
+Install the sidecar once: `cd browser && npm install`.
+
+Steel.dev is optional (`BrowserStart` with `backend=steel` plus `STEEL_API_KEY`). It is a **separate cloud browser**, not your Mac session.
+
+Do not put `STEEL_API_KEY` in git, docs, or settings.json.
 
 
 ### Windows PowerShell provider switching
@@ -377,7 +401,7 @@ These are the models registered in the built-in alias table with known token lim
 |---|---|---|---|---|
 | `opus` | `claude-opus-4-7` | Anthropic | 32 000 | 200 000 |
 | `sonnet` | `claude-sonnet-4-6` | Anthropic | 64 000 | 200 000 |
-| `haiku` | `claude-haiku-4-5-20251213` | Anthropic | 64 000 | 200 000 |
+| `haiku` | `claude-haiku-4-5-20251001` | Anthropic | 64 000 | 200 000 |
 | `grok` / `grok-3` | `grok-3` | xAI | 64 000 | 131 072 |
 | `grok-mini` / `grok-3-mini` | `grok-3-mini` | xAI | 64 000 | 131 072 |
 | `grok-2` | `grok-2` | xAI | — | — |
@@ -396,7 +420,7 @@ You can add custom aliases in any settings file (`~/.claw/settings.json`, `.claw
 ```json
 {
   "aliases": {
-    "fast": "claude-haiku-4-5-20251213",
+    "fast": "claude-haiku-4-5-20251001",
     "smart": "claude-opus-4-7",
     "cheap": "grok-3-mini"
   }
