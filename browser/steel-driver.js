@@ -505,262 +505,155 @@ function pickPage(browser) {
   return usable[usable.length - 1] || pages[pages.length - 1] || null;
 }
 
-async function snapshotLivePage(page) {
-  return page.evaluate(() => {
-    const nodes = [];
-    let index = 0;
-    const seen = new Set();
+const SNAPSHOT_CHAR_CAP = 14000;
 
-    function visible(el) {
-      if (!(el instanceof Element)) {
+const COMPOSE_REGION_SELECTORS = [
+  '[class="msg-form"], form[class*="msg-form"]',
+  '[class*="channelTextArea"]',
+  'div[role="dialog"]:has([aria-label="To"]), div[role="dialog"]:has([name="to"])',
+  'form[class*="compose"]',
+  '[aria-label*="Write a message" i]',
+  '[aria-label*="Type a message" i]',
+  '[aria-label="Message Body"]',
+];
+
+function extractHotLines(yaml) {
+  return String(yaml || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!/\[ref=/.test(line)) {
         return false;
       }
-      try {
-        const style = window.getComputedStyle(el);
-        if (style.display === 'none' || style.visibility === 'hidden') {
-          return false;
-        }
-      } catch (_error) {
-        return false;
-      }
-      const rect = el.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0;
-    }
-
-    function normalizeLabel(value) {
-      return String(value || '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 80);
-    }
-
-    function labelledByText(el) {
-      const ids = (el.getAttribute('aria-labelledby') || '')
-        .split(/\s+/)
-        .filter(Boolean);
-      if (ids.length === 0) {
-        return '';
-      }
-      return ids
-        .map((id) => {
-          const node = document.getElementById(id);
-          return node ? node.textContent || '' : '';
-        })
-        .join(' ');
-    }
-
-    function placeholderNear(el) {
-      const direct =
-        el.getAttribute('aria-placeholder') ||
-        el.getAttribute('placeholder') ||
-        '';
-      if (direct) {
-        return direct;
-      }
-      const root =
-        el.closest(
-          'form, [class*="channelTextArea"], [class*="scrollableContainer"], [class*="searchBar"]',
-        ) || el.parentElement;
-      if (!root) {
-        return '';
-      }
-      const ph = root.querySelector('[class*="placeholder"]');
-      return ph ? ph.textContent || '' : '';
-    }
-
-    function labelFor(el) {
-      const labelled =
-        el.getAttribute('aria-label') ||
-        labelledByText(el) ||
-        el.getAttribute('placeholder') ||
-        el.getAttribute('title') ||
-        el.getAttribute('name') ||
-        el.getAttribute('alt') ||
-        '';
-      let text = '';
-      if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
-        text = el.value || el.placeholder || '';
-      } else {
-        const node = el.childNodes[0];
-        if (node && node.nodeType === Node.TEXT_NODE) {
-          text = node.textContent || '';
-        }
-      }
-      return normalizeLabel(labelled || placeholderNear(el) || text);
-    }
-
-    function isEditingHost(el) {
-      if (!(el instanceof Element) || !el.isContentEditable) {
-        return false;
-      }
-      const parent = el.parentElement;
-      return !parent || !parent.isContentEditable;
-    }
-
-    function regionOf(el) {
-      const rect = el.getBoundingClientRect();
-      const vh = window.innerHeight || 1;
-      if (rect.top > vh * 0.62) {
-        return 'bottom';
-      }
-      if (rect.top < vh * 0.22) {
-        return 'top';
-      }
-      return 'mid';
-    }
-
-    function isSearchish(el, role, name) {
-      const type = (el.getAttribute('type') || '').toLowerCase();
-      const blob = `${role} ${name} ${el.getAttribute('aria-label') || ''} ${
-        el.getAttribute('placeholder') || ''
-      }`.toLowerCase();
-      return (
-        role === 'searchbox' ||
-        type === 'search' ||
-        /\bsearch\b/.test(blob)
-      );
-    }
-
-    function isInteractive(el) {
-      const tag = el.tagName.toLowerCase();
-      const role = (el.getAttribute('role') || '').toLowerCase();
-      if (['listitem', 'treeitem'].includes(role)) {
-        const name = labelFor(el);
-        if (!name || name === tag || name === role) {
-          return false;
-        }
-      }
-      if (
-        ['a', 'button', 'input', 'textarea', 'select', 'option', 'summary'].includes(
-          tag,
-        )
-      ) {
+      if (/\b(textbox|searchbox|combobox)\b/i.test(line)) {
         return true;
       }
-      if (isEditingHost(el)) {
-        return true;
-      }
-      if (
-        [
-          'button',
-          'link',
-          'textbox',
-          'searchbox',
-          'menuitem',
-          'tab',
-          'option',
-          'combobox',
-          'switch',
-          'checkbox',
-          'radio',
-          'listitem',
-          'treeitem',
-          'gridcell',
-        ].includes(role)
-      ) {
-        return true;
-      }
-      return el.getAttribute('aria-label') && el.getAttribute('tabindex') !== null;
-    }
+      return /\bbutton\b/i.test(line) && /\b(send|submit|compose)\b/i.test(line);
+    });
+}
 
-    function walk(el, depth) {
-      if (!el || depth > 30 || nodes.length >= 120) {
-        return;
-      }
-      let skipChildren = false;
-      if (el instanceof Element && visible(el) && isInteractive(el) && !seen.has(el)) {
-        seen.add(el);
-        const tag = el.tagName.toLowerCase();
-        let role =
-          (el.getAttribute('role') || '').toLowerCase() ||
-          (isEditingHost(el) ? 'textbox' : tag);
-        let name = labelFor(el) || tag;
-        let kind = 'other';
-        if (isSearchish(el, role, name)) {
-          role = 'searchbox';
-          name = `SEARCH (not the message box): ${name}`;
-          kind = 'search';
-        } else if (
-          (role === 'textbox' || tag === 'textarea' || isEditingHost(el)) &&
-          regionOf(el) === 'bottom'
-        ) {
-          const placeholder = placeholderNear(el) || name;
-          name = `Message composer: ${placeholder}`;
-          kind = 'composer';
-        }
-        const ref = `e${index + 1}`;
-        index += 1;
-        el.setAttribute('data-claw-ref', ref);
-        el.setAttribute('data-claw-kind', kind);
-        nodes.push({ ref, role, name, tag, kind });
-        skipChildren =
-          kind === 'search' ||
-          kind === 'composer' ||
-          ['textbox', 'searchbox', 'combobox', 'textarea'].includes(role) ||
-          tag === 'input' ||
-          tag === 'textarea' ||
-          isEditingHost(el);
-      }
-      if (!skipChildren) {
-        const children = el instanceof Element ? el.children : el.childNodes;
-        for (const child of children || []) {
-          walk(child, depth + 1);
-        }
-        if (el instanceof Element && el.shadowRoot) {
-          walk(el.shadowRoot, depth + 1);
-        }
-      }
+async function firstVisible(page, selector) {
+  const locator = page.locator(selector);
+  const count = await locator.count().catch(() => 0);
+  for (let i = 0; i < count; i += 1) {
+    const item = locator.nth(i);
+    if (await item.isVisible().catch(() => false)) {
+      return item;
     }
+  }
+  return null;
+}
 
-    if (document.body) {
-      walk(document.body, 0);
+async function composeRegionLocator(page) {
+  for (const selector of COMPOSE_REGION_SELECTORS) {
+    const found = await firstVisible(page, selector);
+    if (found) {
+      return found;
     }
-    return {
-      url: location.href,
-      title: document.title,
-      nodes,
-    };
-  });
+  }
+  const boxes = page.locator(
+    '[role="textbox"][contenteditable="true"], [contenteditable="true"]',
+  );
+  const count = await boxes.count().catch(() => 0);
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const box = boxes.nth(i);
+    if (!(await box.isVisible().catch(() => false))) {
+      continue;
+    }
+    const search = await box.evaluate((el) => {
+      const blob = `${el.getAttribute('aria-label') || ''} ${el.className || ''}`.toLowerCase();
+      return /\bsearch\b/.test(blob);
+    }).catch(() => false);
+    if (!search) {
+      return box;
+    }
+  }
+  return null;
 }
 
 async function formatLiveSnapshot(page) {
-  let snap = { url: page.url(), title: await page.title().catch(() => ''), nodes: [] };
+  if (typeof page.ariaSnapshot !== 'function') {
+    throw new Error(
+      'Playwright ariaSnapshot is missing. From the repo root run: cd browser && npm install playwright@latest',
+    );
+  }
+  let pageYaml = '';
+  let composeYaml = '';
   for (let attempt = 0; attempt < 6; attempt += 1) {
     try {
-      snap = await snapshotLivePage(page);
+      pageYaml = await page.ariaSnapshot({ mode: 'ai' });
+      const compose = await composeRegionLocator(page);
+      if (compose && typeof compose.ariaSnapshot === 'function') {
+        composeYaml = await compose.ariaSnapshot({ mode: 'ai' });
+      }
     } catch (_error) {
       await page.waitForTimeout(400);
       continue;
     }
-    if (snap.nodes && snap.nodes.length > 0) {
+    if (pageYaml || composeYaml) {
       break;
     }
     await page.waitForTimeout(500);
   }
-  const lines = (snap.nodes || []).map(
-    (node) => `[ref=${node.ref}] ${node.role} "${node.name}"`,
-  );
-  const hasSearch = (snap.nodes || []).some((node) => node.kind === 'search');
-  const hasComposer = (snap.nodes || []).some((node) => node.kind === 'composer');
-  if (hasSearch && hasComposer) {
-    lines.unshift(
-      'Hint: send chat/DMs with the "Message composer" ref. Never type messages into a searchbox.',
+
+  const hot = [];
+  const seen = new Set();
+  for (const line of [...extractHotLines(composeYaml), ...extractHotLines(pageYaml)]) {
+    if (seen.has(line)) {
+      continue;
+    }
+    seen.add(line);
+    hot.push(line);
+  }
+
+  const blob = `${composeYaml}\n${pageYaml}`.toLowerCase();
+  const hints = [];
+  if (/\btextbox\b/.test(blob)) {
+    hints.push(
+      'Hint: type chat/email into a textbox (Write a message, Message Body, To) from Type targets / Compose area. Never type into a searchbox. For LinkedIn/Discord/Slack chat, BrowserPress Enter after typing to send. Do not BrowserScroll looking for the composer.',
     );
   }
+
+  let body = pageYaml || '';
+  if (body.length > SNAPSHOT_CHAR_CAP) {
+    body = `${body.slice(0, SNAPSHOT_CHAR_CAP)}\n[ARIA snapshot truncated from ${pageYaml.length} characters]`;
+  }
+
+  const parts = [];
+  if (hints.length) {
+    parts.push(hints.join('\n'));
+  }
+  if (hot.length) {
+    parts.push(['Type targets:', ...hot].join('\n'));
+  }
+  if (composeYaml) {
+    parts.push(`Compose area:\n${composeYaml}`);
+  }
+  if (body) {
+    parts.push(body);
+  }
+
   return {
-    url: snap.url || page.url(),
-    title: snap.title || '',
-    snapshot: lines.join('\n'),
+    url: page.url(),
+    title: await page.title().catch(() => ''),
+    snapshot: parts.join('\n\n'),
   };
 }
 
 async function locatorForRef(page, ref) {
-  const locator = page.locator(`[data-claw-ref="${ref}"]`);
-  const count = await locator.count();
-  if (count === 0) {
-    throw new Error(`unknown ref: ${ref}. Call BrowserSnapshot and use a current ref.`);
+  const clean = String(ref || '').replace(/^@/, '').trim();
+  if (!clean) {
+    throw new Error('ref is required');
   }
-  return locator.first();
+  const aria = page.locator(`aria-ref=${clean}`);
+  if ((await aria.count()) > 0) {
+    return aria.first();
+  }
+  const stamped = page.locator(`[data-claw-ref="${clean}"]`);
+  if ((await stamped.count()) > 0) {
+    return stamped.first();
+  }
+  throw new Error(`unknown ref: ${ref}. Call BrowserSnapshot and use a current ref.`);
 }
 
 async function isSearchLocator(locator) {
@@ -782,11 +675,50 @@ async function isSearchLocator(locator) {
 }
 
 async function composerLocator(page) {
-  const marked = page.locator('[data-claw-kind="composer"]');
-  if ((await marked.count()) > 0) {
-    return marked.first();
+  const byRole = page.getByRole('textbox', {
+    name: /write a message|type a message|message composer|message body|message karma/i,
+  });
+  const roleCount = await byRole.count().catch(() => 0);
+  for (let i = roleCount - 1; i >= 0; i -= 1) {
+    const loc = byRole.nth(i);
+    if (await loc.isVisible().catch(() => false)) {
+      return loc;
+    }
   }
-  return null;
+  return composeRegionLocator(page);
+}
+
+async function isTypeableLocator(locator) {
+  return locator.evaluate((el) => {
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    if (['checkbox', 'radio', 'hidden', 'submit', 'button', 'file'].includes(type)) {
+      return false;
+    }
+    if (el.isContentEditable) {
+      return true;
+    }
+    if (tag === 'textarea' || tag === 'input' || tag === 'select') {
+      return true;
+    }
+    const role = (el.getAttribute('role') || '').toLowerCase();
+    return ['textbox', 'searchbox', 'combobox'].includes(role);
+  });
+}
+
+async function isChatComposerLocator(locator) {
+  return locator.evaluate((el) => {
+    const root =
+      el.closest(
+        '[class*="msg-form"], [class*="channelTextArea"], [data-slate-editor="true"]',
+      ) || el;
+    const blob = `${root.className || ''} ${el.getAttribute('aria-label') || ''} ${
+      el.getAttribute('placeholder') || ''
+    }`.toLowerCase();
+    return /msg-form|channeltextarea|slate|write a message|type a message|message karma/.test(
+      blob,
+    );
+  });
 }
 
 async function typeIntoLocator(page, locator, text) {
@@ -799,7 +731,7 @@ async function typeIntoLocator(page, locator, text) {
   if (editable) {
     await page.keyboard.press('ControlOrMeta+A');
     await page.keyboard.press('Backspace');
-    await page.keyboard.type(text, { delay: 12 });
+    await page.keyboard.type(text, { delay: 8 });
     return;
   }
   await locator.fill(text);
@@ -963,25 +895,35 @@ async function liveHandle(method, params) {
       let locator = await locatorForRef(liveState.page, ref);
       let typedRef = ref;
       let redirectedFrom = null;
-      if (await isSearchLocator(locator)) {
+      const search = await isSearchLocator(locator);
+      const typeable = search ? false : await isTypeableLocator(locator);
+      if (search || !typeable) {
         const composer = await composerLocator(liveState.page);
         if (composer) {
           redirectedFrom = ref;
           locator = composer;
-          typedRef =
-            (await composer.getAttribute('data-claw-ref')) || ref;
+          typedRef = ref;
         }
       }
       await typeIntoLocator(liveState.page, locator, text);
+      let sent = false;
+      if (await isChatComposerLocator(locator).catch(() => false)) {
+        await liveState.page.keyboard.press('Enter');
+        sent = true;
+      }
       const result = {
         typed: text,
         ref: typedRef,
+        sent,
         ...(await formatLiveSnapshot(liveState.page)),
       };
       if (redirectedFrom) {
         result.redirectedFrom = redirectedFrom;
-        result.note =
-          `${redirectedFrom} is channel search, not the message bar. Typed into message composer ${typedRef} instead.`;
+        result.note = sent
+          ? `${redirectedFrom} is not the message box. Typed into the chat composer and pressed Enter to send.`
+          : `${redirectedFrom} is not the message box. Typed into the composer instead.`;
+      } else if (sent) {
+        result.note = 'Pressed Enter to send (chat composer).';
       }
       return result;
     }

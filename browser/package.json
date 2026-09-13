@@ -8,7 +8,7 @@
     "test": "node test-mock.js"
   },
   "dependencies": {
-    "playwright": "^1.49.0",
+    "playwright": "^1.59.0",
     "steel-sdk": "^0.15.0"
   }
 }

@@ -1412,7 +1412,7 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "BrowserSnapshot",
-            description: "Capture the current page as an accessibility tree with [ref=eN] handles. Skip this when Navigate/Click/Type/Wait already returned a snapshot; only use it if refs look stale or the page changed by itself.",
+            description: "Capture the current page as a Playwright ARIA tree with [ref=eN] handles. Type targets and the compose/chat area are listed first. Skip this when Navigate/Click/Type/Wait already returned a snapshot; only use it if refs look stale or the page changed by itself.",
             input_schema: json!({
                 "type": "object",
                 "properties": {},
