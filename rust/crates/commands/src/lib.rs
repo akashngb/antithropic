@@ -136,6 +136,13 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: true,
     },
     SlashCommandSpec {
+        name: "browser",
+        aliases: &[],
+        summary: "Attach to your Chrome",
+        argument_hint: Some("[status|login|stop]"),
+        resume_supported: true,
+    },
+    SlashCommandSpec {
         name: "memory",
         aliases: &[],
         summary: "Inspect loaded Claude instruction memory files",
@@ -1101,6 +1108,9 @@ pub enum SlashCommand {
         action: Option<String>,
         target: Option<String>,
     },
+    Browser {
+        action: Option<String>,
+    },
     Memory,
     Init,
     Diff,
@@ -1313,6 +1323,7 @@ impl SlashCommand {
             Self::Team { .. } => "/team",
             Self::Sandbox => "/sandbox",
             Self::Mcp { .. } => "/mcp",
+            Self::Browser { .. } => "/browser",
             Self::Export { .. } => "/export",
             Self::Repent => "/repent",
             Self::Revert => "/revert",
@@ -1394,6 +1405,7 @@ pub fn validate_slash_command_input(
             section: parse_config_section(&args)?,
         },
         "mcp" => parse_mcp_command(&args)?,
+        "browser" => parse_browser_command(&args)?,
         "memory" => {
             validate_no_args(command, &args)?;
             SlashCommand::Memory
@@ -1702,6 +1714,25 @@ fn parse_session_command(args: &[&str]) -> Result<SlashCommand, SlashCommandPars
             ),
             "session",
             "/session [list|exists <session-id>|switch <session-id>|fork [branch-name]|delete <session-id> [--force]]",
+        )),
+    }
+}
+
+fn parse_browser_command(args: &[&str]) -> Result<SlashCommand, SlashCommandParseError> {
+    match args {
+        [] => Ok(SlashCommand::Browser { action: None }),
+        ["status" | "login" | "local" | "start" | "open" | "stop"] => Ok(SlashCommand::Browser {
+            action: Some(args[0].to_string()),
+        }),
+        ["help" | "-h" | "--help"] => Ok(SlashCommand::Browser {
+            action: Some("help".to_string()),
+        }),
+        [action, ..] => Err(command_error(
+            &format!(
+                "Unknown /browser action '{action}'. Use /browser to attach, or status, login, stop."
+            ),
+            "browser",
+            "/browser [status|login|stop]",
         )),
     }
 }
@@ -5373,6 +5404,7 @@ pub fn handle_slash_command(
         | SlashCommand::Resume { .. }
         | SlashCommand::Config { .. }
         | SlashCommand::Mcp { .. }
+        | SlashCommand::Browser { .. }
         | SlashCommand::Memory
         | SlashCommand::Init
         | SlashCommand::Diff
@@ -5694,6 +5726,22 @@ mod tests {
             Ok(Some(SlashCommand::Mcp {
                 action: Some("show".to_string()),
                 target: Some("remote".to_string())
+            }))
+        );
+        assert_eq!(
+            SlashCommand::parse("/browser"),
+            Ok(Some(SlashCommand::Browser { action: None }))
+        );
+        assert_eq!(
+            SlashCommand::parse("/browser login"),
+            Ok(Some(SlashCommand::Browser {
+                action: Some("login".to_string())
+            }))
+        );
+        assert_eq!(
+            SlashCommand::parse("/browser start"),
+            Ok(Some(SlashCommand::Browser {
+                action: Some("start".to_string())
             }))
         );
         assert_eq!(

@@ -251,6 +251,30 @@ export ANTHROPIC_AUTH_TOKEN="anthropic-oauth-or-proxy-bearer-token"
 
 **If you meant a different provider:** if `claw` reports missing Anthropic credentials but you already have `OPENAI_API_KEY`, `XAI_API_KEY`, or `DASHSCOPE_API_KEY` exported, you most likely forgot to prefix the model name with the provider's routing prefix. Use `--model openai/gpt-4.1-mini` (OpenAI-compat / OpenRouter / Ollama), `--model grok` (xAI), or `--model qwen-plus` (DashScope) and the prefix router will select the right backend regardless of the ambient credentials. The error message now includes a hint that names the detected env var.
 
+## Visible web browser
+
+Claw drives **your Chrome**. One command:
+
+```text
+/browser
+```
+
+That attaches to the Chrome window on this Mac (Gmail/LinkedIn stay logged in).
+
+Chrome 136+ **ignores** `--remote-debugging-port=9222` on your real profile. That is why the old relaunch never opened the port. Use Chrome's inspect toggle instead (Chrome 144+):
+
+1. In Google Chrome open `chrome://inspect/#remote-debugging` and turn **Remote debugging** on.
+2. In claw run `/browser`. When Chrome asks, click **Allow**.
+3. Watch that same window. `/browser stop` disconnects Claw; Chrome stays open.
+
+`/browser` opens the inspect page if debugging is not on yet, then waits up to 90 seconds for you to enable it.
+
+Install the sidecar once: `cd browser && npm install`.
+
+Steel.dev is optional (`BrowserStart` with `backend=steel` plus `STEEL_API_KEY`). It is a **separate cloud browser**, not your Mac session.
+
+Do not put `STEEL_API_KEY` in git, docs, or settings.json.
+
 
 ### Windows PowerShell provider switching
 

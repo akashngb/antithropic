@@ -1,0 +1,842 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * JSON-line sidecar that drives a Steel cloud Chrome session over CDP.
+ * stdout is protocol only; logs go to stderr. Mock mode (--mock / CLAW_BROWSER_MOCK=1)
+ * never talks to Steel and needs no Playwright install.
+ */
+
+const { spawn } = require('child_process');
+const fs = require('fs');
+const http = require('http');
+const os = require('os');
+const path = require('path');
+const readline = require('readline');
+
+const MOCK =
+  process.argv.includes('--mock') || process.env.CLAW_BROWSER_MOCK === '1';
+
+/** @type {null | {
+ *   sessionId: string,
+ *   debugUrl: string,
+ *   profileId: string | null,
+ *   url: string,
+ *   title: string,
+ *   nodes: Array<{ref: string, role: string, name: string, tag: string}>,
+ *   lastTyped: Record<string, string>,
+ *   lastClicked: string | null,
+ *   sent: boolean,
+ * }} */
+let mockState = null;
+
+/** @type {null | {
+ *   session: object | null,
+ *   browser: object,
+ *   page: object,
+ *   client: object | null,
+ *   backend: 'steel' | 'local',
+ * }} */
+let liveState = null;
+
+function writeResult(id, ok, payload) {
+  const body = ok
+    ? { id, ok: true, result: payload }
+    : { id, ok: false, error: String(payload) };
+  process.stdout.write(`${JSON.stringify(body)}\n`);
+}
+
+function watchUrl(debugUrl) {
+  if (!debugUrl) {
+    return null;
+  }
+  const sep = debugUrl.includes('?') ? '&' : '?';
+  return `${debugUrl}${sep}interactive=true`;
+}
+
+function cdpEndpoint(session, apiKey) {
+  if (session.websocketUrl) {
+    const sep = session.websocketUrl.includes('?') ? '&' : '?';
+    return `${session.websocketUrl}${sep}apiKey=${encodeURIComponent(apiKey)}`;
+  }
+  return `wss://connect.steel.dev?apiKey=${encodeURIComponent(apiKey)}&sessionId=${session.id}`;
+}
+
+function mockNodesForUrl(url) {
+  const lower = url.toLowerCase();
+  if (lower.includes('mail.google.com') || lower.includes('gmail')) {
+    return [
+      { ref: 'e1', role: 'button', name: 'Compose', tag: 'button' },
+      { ref: 'e2', role: 'link', name: 'Inbox', tag: 'a' },
+      { ref: 'e3', role: 'searchbox', name: 'Search mail', tag: 'input' },
+    ];
+  }
+  if (lower.includes('linkedin.com')) {
+    return [
+      { ref: 'e1', role: 'link', name: 'Messaging', tag: 'a' },
+      { ref: 'e2', role: 'button', name: 'Start a post', tag: 'button' },
+      { ref: 'e3', role: 'searchbox', name: 'Search', tag: 'input' },
+    ];
+  }
+  return [
+    { ref: 'e1', role: 'link', name: 'Home', tag: 'a' },
+    { ref: 'e2', role: 'textbox', name: 'Search', tag: 'input' },
+  ];
+}
+
+function mockComposeNodes() {
+  return [
+    { ref: 'e3', role: 'textbox', name: 'To', tag: 'input' },
+    { ref: 'e4', role: 'textbox', name: 'Subject', tag: 'input' },
+    { ref: 'e5', role: 'textbox', name: 'Message Body', tag: 'div' },
+    { ref: 'e6', role: 'button', name: 'Send', tag: 'button' },
+  ];
+}
+
+function requireMockSession() {
+  if (!mockState) {
+    throw new Error('No browser session. Call BrowserStart first.');
+  }
+  return mockState;
+}
+
+function formatSnapshot(state) {
+  const lines = state.nodes.map(
+    (node) => `[ref=${node.ref}] ${node.role} "${node.name}"`,
+  );
+  return {
+    url: state.url,
+    title: state.title,
+    snapshot: lines.join('\n'),
+    nodes: state.nodes,
+  };
+}
+
+async function mockHandle(method, params) {
+  switch (method) {
+    case 'start': {
+      mockState = {
+        sessionId: 'mock-session',
+        debugUrl: 'https://api.steel.dev/v1/sessions/mock-session/player',
+        profileId: params.profileId || 'mock-profile',
+        url: 'about:blank',
+        title: 'New Tab',
+        nodes: [],
+        lastTyped: {},
+        lastClicked: null,
+        sent: false,
+      };
+      return {
+        sessionId: mockState.sessionId,
+        debugUrl: mockState.debugUrl,
+        watchUrl: watchUrl(mockState.debugUrl),
+        profileId: mockState.profileId,
+        backend: defaultBackend(params),
+        mock: true,
+      };
+    }
+    case 'navigate': {
+      const state = requireMockSession();
+      const url = String(params.url || '');
+      if (!url) {
+        throw new Error('url is required');
+      }
+      state.url = url;
+      state.title = url.includes('mail.google')
+        ? 'Inbox - Gmail'
+        : url.includes('linkedin')
+          ? 'LinkedIn'
+          : url;
+      state.nodes = mockNodesForUrl(url);
+      state.sent = false;
+      return { ...formatSnapshot(state), navigated: url };
+    }
+    case 'snapshot': {
+      return formatSnapshot(requireMockSession());
+    }
+    case 'click': {
+      const state = requireMockSession();
+      const ref = String(params.ref || '');
+      const node = state.nodes.find((item) => item.ref === ref);
+      if (!node) {
+        throw new Error(`unknown ref: ${ref}`);
+      }
+      state.lastClicked = ref;
+      if (node.name === 'Compose') {
+        state.nodes = mockComposeNodes();
+        state.title = 'Compose - Gmail';
+      }
+      if (node.name === 'Send') {
+        state.sent = true;
+        state.nodes = mockNodesForUrl('https://mail.google.com');
+        state.title = 'Inbox - Gmail (sent)';
+      }
+      return { clicked: ref, name: node.name, ...formatSnapshot(state) };
+    }
+    case 'type': {
+      const state = requireMockSession();
+      const ref = String(params.ref || '');
+      const text = String(params.text || '');
+      const node = state.nodes.find((item) => item.ref === ref);
+      if (!node) {
+        throw new Error(`unknown ref: ${ref}`);
+      }
+      if (!text) {
+        throw new Error('text is required');
+      }
+      state.lastTyped[ref] = text;
+      return { typed: text, ref, ...formatSnapshot(state) };
+    }
+    case 'press': {
+      requireMockSession();
+      return { pressed: String(params.key || ''), ...formatSnapshot(mockState) };
+    }
+    case 'scroll': {
+      requireMockSession();
+      return {
+        scrolled: Number(params.deltaY || 0),
+        ...formatSnapshot(mockState),
+      };
+    }
+    case 'wait': {
+      const state = requireMockSession();
+      const urlContains = params.urlContains
+        ? String(params.urlContains)
+        : null;
+      const titleContains = params.titleContains
+        ? String(params.titleContains)
+        : null;
+      const matched =
+        (!urlContains || state.url.includes(urlContains)) &&
+        (!titleContains || state.title.includes(titleContains));
+      if (!matched) {
+        throw new Error(
+          `wait timed out (url=${state.url} title=${state.title}). Sign in in the live viewer if this is a login wall.`,
+        );
+      }
+      return { waited: true, ...formatSnapshot(state) };
+    }
+    case 'status': {
+      if (!mockState) {
+        return { live: false, mock: true };
+      }
+      return {
+        live: true,
+        mock: true,
+        sessionId: mockState.sessionId,
+        debugUrl: mockState.debugUrl,
+        watchUrl: watchUrl(mockState.debugUrl),
+        profileId: mockState.profileId,
+        url: mockState.url,
+        title: mockState.title,
+      };
+    }
+    case 'stop': {
+      const previous = mockState;
+      mockState = null;
+      return {
+        released: true,
+        sessionId: previous ? previous.sessionId : null,
+        profileId: previous ? previous.profileId : null,
+      };
+    }
+    default:
+      throw new Error(`unsupported method: ${method}`);
+  }
+}
+
+async function loadPlaywright() {
+  try {
+    return require('playwright');
+  } catch (error) {
+    throw new Error(
+      `Playwright is not installed. From the repo root run: cd browser && npm install (${error.message})`,
+    );
+  }
+}
+
+async function loadPlaywrightAndSteel() {
+  const playwright = await loadPlaywright();
+  let Steel;
+  try {
+    Steel = require('steel-sdk');
+  } catch (error) {
+    throw new Error(
+      `steel-sdk is not installed. From the repo root run: cd browser && npm install (${error.message})`,
+    );
+  }
+  return { playwright, Steel };
+}
+
+function defaultBackend(params) {
+  return String(
+    (params && params.backend) || process.env.CLAW_BROWSER_BACKEND || 'local',
+  ).toLowerCase();
+}
+
+function localCdpUrl(params) {
+  return (
+    (params && params.cdpUrl) ||
+    process.env.CLAW_CHROME_CDP_URL ||
+    'http://127.0.0.1:9222'
+  );
+}
+
+function autoLaunchEnabled(params) {
+  if (params && params.autoLaunch === false) {
+    return false;
+  }
+  const flag = String(process.env.CLAW_BROWSER_NO_LAUNCH || '').toLowerCase();
+  return flag !== '1' && flag !== 'true';
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function cdpReady(cdpUrl, timeoutMs = 800) {
+  return new Promise((resolve) => {
+    let url;
+    try {
+      url = new URL('/json/version', cdpUrl.endsWith('/') ? cdpUrl : `${cdpUrl}/`);
+    } catch (_error) {
+      resolve(false);
+      return;
+    }
+    const req = http.get(url, { timeout: timeoutMs }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+function chromeUserDataDir() {
+  if (process.env.CLAW_CHROME_USER_DATA_DIR) {
+    return process.env.CLAW_CHROME_USER_DATA_DIR;
+  }
+  if (process.platform === 'darwin') {
+    return path.join(
+      os.homedir(),
+      'Library',
+      'Application Support',
+      'Google',
+      'Chrome',
+    );
+  }
+  if (process.platform === 'win32') {
+    return path.join(
+      process.env.LOCALAPPDATA || '',
+      'Google',
+      'Chrome',
+      'User Data',
+    );
+  }
+  return path.join(os.homedir(), '.config', 'google-chrome');
+}
+
+function readWsEndpoint(userDataDir) {
+  const portPath = path.join(userDataDir, 'DevToolsActivePort');
+  let content;
+  try {
+    content = fs.readFileSync(portPath, 'utf8');
+  } catch (_error) {
+    return null;
+  }
+  const lines = content
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) {
+    return null;
+  }
+  const port = Number(lines[0]);
+  const wsPath = lines[1];
+  if (!Number.isInteger(port) || port <= 0 || !wsPath.startsWith('/')) {
+    return null;
+  }
+  return `ws://127.0.0.1:${port}${wsPath}`;
+}
+
+function openInspectPage() {
+  const url = 'chrome://inspect/#remote-debugging';
+  if (process.platform === 'darwin') {
+    spawn('open', ['-a', 'Google Chrome', url], {
+      stdio: 'ignore',
+      detached: true,
+    }).unref();
+    return;
+  }
+  if (process.platform === 'win32') {
+    spawn('cmd', ['/C', 'start', '', url], {
+      stdio: 'ignore',
+      detached: true,
+    }).unref();
+    return;
+  }
+  spawn('xdg-open', [url], { stdio: 'ignore', detached: true }).unref();
+}
+
+function inspectHint() {
+  return [
+    'Chrome 136+ silently ignores --remote-debugging-port on your real profile, so port 9222 never opens.',
+    'In YOUR Chrome, open chrome://inspect/#remote-debugging and turn Remote debugging ON.',
+    'When Chrome asks to allow this session, click Allow.',
+    'Then run /browser again. Watch that same window — Gmail/LinkedIn stay logged in.',
+  ].join(' ');
+}
+
+async function connectOverEndpoint(playwright, endpoint) {
+  return playwright.chromium.connectOverCDP(endpoint);
+}
+
+async function connectLocalChrome(playwright, cdpUrl, autoLaunch) {
+  const userDataDir = chromeUserDataDir();
+  if (await cdpReady(cdpUrl)) {
+    const browser = await connectOverEndpoint(playwright, cdpUrl);
+    return { browser, via: 'http-cdp', openedInspect: false };
+  }
+  const tryInspect = async () => {
+    const ws = readWsEndpoint(userDataDir);
+    if (!ws) {
+      return null;
+    }
+    return connectOverEndpoint(playwright, ws);
+  };
+  try {
+    const browser = await tryInspect();
+    if (browser) {
+      return { browser, via: 'inspect', openedInspect: false };
+    }
+  } catch (_error) {
+    // Allow dialog may not have been accepted yet.
+  }
+  if (!autoLaunch) {
+    throw new Error(inspectHint());
+  }
+  openInspectPage();
+  const deadline = Date.now() + 15000;
+  let lastError = 'DevToolsActivePort not found yet';
+  while (Date.now() < deadline) {
+    await sleep(500);
+    try {
+      const browser = await tryInspect();
+      if (browser) {
+        return { browser, via: 'inspect', openedInspect: true };
+      }
+    } catch (error) {
+      lastError = error.message;
+    }
+  }
+  throw new Error(`${inspectHint()} (${lastError})`);
+}
+
+function pickPage(browser) {
+  const contexts = browser.contexts();
+  const pages = [];
+  for (const context of contexts) {
+    for (const page of context.pages()) {
+      pages.push(page);
+    }
+  }
+  const usable = pages.filter((page) => {
+    const url = page.url();
+    return url && !url.startsWith('devtools://') && !url.startsWith('chrome-extension://');
+  });
+  return usable[usable.length - 1] || pages[pages.length - 1] || null;
+}
+
+async function snapshotLivePage(page) {
+  return page.evaluate(() => {
+    const nodes = [];
+    let index = 0;
+    const seen = new Set();
+
+    function visible(el) {
+      if (!(el instanceof Element)) {
+        return false;
+      }
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden') {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    }
+
+    function labelFor(el) {
+      const labelled =
+        el.getAttribute('aria-label') ||
+        el.getAttribute('placeholder') ||
+        el.getAttribute('title') ||
+        el.getAttribute('name') ||
+        el.getAttribute('alt') ||
+        '';
+      const text = (el.innerText || el.value || '').replace(/\s+/g, ' ').trim();
+      return (labelled || text).slice(0, 80);
+    }
+
+    function isInteractive(el) {
+      const tag = el.tagName.toLowerCase();
+      if (['a', 'button', 'input', 'textarea', 'select', 'option'].includes(tag)) {
+        return true;
+      }
+      const role = (el.getAttribute('role') || '').toLowerCase();
+      return (
+        ['button', 'link', 'textbox', 'searchbox', 'menuitem', 'tab'].includes(
+          role,
+        ) || el.isContentEditable
+      );
+    }
+
+    function walk(el, depth) {
+      if (!el || depth > 12 || nodes.length >= 80) {
+        return;
+      }
+      if (el instanceof Element && visible(el) && isInteractive(el) && !seen.has(el)) {
+        seen.add(el);
+        const ref = `e${index + 1}`;
+        index += 1;
+        el.setAttribute('data-claw-ref', ref);
+        nodes.push({
+          ref,
+          role:
+            el.getAttribute('role') ||
+            (el.isContentEditable ? 'textbox' : el.tagName.toLowerCase()),
+          name: labelFor(el) || el.tagName.toLowerCase(),
+          tag: el.tagName.toLowerCase(),
+        });
+      }
+      for (const child of el.children || []) {
+        walk(child, depth + 1);
+      }
+    }
+
+    walk(document.body, 0);
+    return {
+      url: location.href,
+      title: document.title,
+      nodes,
+    };
+  });
+}
+
+async function formatLiveSnapshot(page) {
+  const snap = await snapshotLivePage(page);
+  const lines = snap.nodes.map(
+    (node) => `[ref=${node.ref}] ${node.role} "${node.name}"`,
+  );
+  return {
+    url: snap.url,
+    title: snap.title,
+    snapshot: lines.join('\n'),
+    nodes: snap.nodes,
+  };
+}
+
+async function locatorForRef(page, ref) {
+  const locator = page.locator(`[data-claw-ref="${ref}"]`);
+  const count = await locator.count();
+  if (count === 0) {
+    throw new Error(`unknown ref: ${ref}. Call BrowserSnapshot and use a current ref.`);
+  }
+  return locator.first();
+}
+
+async function releaseLive() {
+  if (!liveState) {
+    return { released: false, sessionId: null, profileId: null, backend: null };
+  }
+  const current = liveState;
+  liveState = null;
+  const local = current.backend === 'local';
+  if (!local) {
+    try {
+      if (current.browser) {
+        await current.browser.close();
+      }
+    } catch (_error) {
+      // ignore close errors so we still release the Steel session
+    }
+    try {
+      if (current.client && current.session && current.session.id) {
+        await current.client.sessions.release(current.session.id);
+      }
+    } catch (_error) {
+      // already released or network failure
+    }
+  }
+  return {
+    released: true,
+    backend: current.backend,
+    sessionId: current.session ? current.session.id : local ? 'local-chrome' : null,
+    profileId: current.session ? current.session.profileId || null : null,
+  };
+}
+
+async function liveHandle(method, params) {
+  switch (method) {
+    case 'start': {
+      await releaseLive();
+      const backend = defaultBackend(params);
+      if (backend === 'local') {
+        const playwright = await loadPlaywright();
+        const cdpUrl = localCdpUrl(params);
+        const connected = await connectLocalChrome(
+          playwright,
+          cdpUrl,
+          autoLaunchEnabled(params),
+        );
+        const browser = connected.browser;
+        let page = pickPage(browser);
+        if (!page) {
+          const context = browser.contexts()[0] || (await browser.newContext());
+          page = await context.newPage();
+        }
+        liveState = {
+          session: null,
+          browser,
+          page,
+          client: null,
+          backend: 'local',
+        };
+        const snap = await formatLiveSnapshot(page);
+        return {
+          sessionId: 'local-chrome',
+          backend: 'local',
+          cdpUrl,
+          debugUrl: null,
+          watchUrl: null,
+          profileId: null,
+          mock: false,
+          launched: connected.openedInspect,
+          via: connected.via,
+          hint:
+            connected.via === 'inspect'
+              ? 'Attached to your Chrome. If a permission dialog appeared, click Allow. Watch that window — Gmail/LinkedIn stay logged in.'
+              : 'Attached to your local Chrome. Watch the Chrome window on this Mac — that is the live view.',
+          ...snap,
+        };
+      }
+      const apiKey = process.env.STEEL_API_KEY || params.apiKey;
+      if (!apiKey) {
+        throw new Error(
+          'Steel is not configured. Copy .env.example to .env and set STEEL_API_KEY, or omit backend=steel to use local Chrome.',
+        );
+      }
+      const { playwright, Steel } = await loadPlaywrightAndSteel();
+      const baseURL = process.env.STEEL_BASE_URL || params.baseUrl || undefined;
+      const client = baseURL
+        ? new Steel({ steelAPIKey: apiKey, baseURL })
+        : new Steel({ steelAPIKey: apiKey });
+      const timeoutMs = Number(params.timeoutMs || 900000);
+      const createPayload = {
+        timeout: timeoutMs,
+        persistProfile: true,
+        debugConfig: { interactive: true },
+        dimensions: { width: 1280, height: 768 },
+      };
+      if (params.profileId) {
+        createPayload.profileId = params.profileId;
+      }
+      const session = await client.sessions.create(createPayload);
+      const browser = await playwright.chromium.connectOverCDP(
+        cdpEndpoint(session, apiKey),
+      );
+      const context = browser.contexts()[0];
+      const page =
+        context && context.pages().length > 0
+          ? context.pages()[0]
+          : await context.newPage();
+      liveState = { session, browser, page, client, backend: 'steel' };
+      return {
+        sessionId: session.id,
+        backend: 'steel',
+        debugUrl: session.debugUrl,
+        watchUrl: watchUrl(session.debugUrl),
+        profileId: session.profileId || params.profileId || null,
+        mock: false,
+      };
+    }
+    case 'navigate': {
+      if (!liveState) {
+        throw new Error('No browser session. Call BrowserStart first.');
+      }
+      const url = String(params.url || '');
+      if (!url) {
+        throw new Error('url is required');
+      }
+      await liveState.page.goto(url, { waitUntil: 'domcontentloaded' });
+      return {
+        navigated: url,
+        ...(await formatLiveSnapshot(liveState.page)),
+      };
+    }
+    case 'snapshot': {
+      if (!liveState) {
+        throw new Error('No browser session. Call BrowserStart first.');
+      }
+      return formatLiveSnapshot(liveState.page);
+    }
+    case 'click': {
+      if (!liveState) {
+        throw new Error('No browser session. Call BrowserStart first.');
+      }
+      const ref = String(params.ref || '');
+      const locator = await locatorForRef(liveState.page, ref);
+      await locator.click();
+      await liveState.page.waitForTimeout(300);
+      return { clicked: ref, ...(await formatLiveSnapshot(liveState.page)) };
+    }
+    case 'type': {
+      if (!liveState) {
+        throw new Error('No browser session. Call BrowserStart first.');
+      }
+      const ref = String(params.ref || '');
+      const text = String(params.text || '');
+      if (!text) {
+        throw new Error('text is required');
+      }
+      const locator = await locatorForRef(liveState.page, ref);
+      await locator.fill(text);
+      return { typed: text, ref, ...(await formatLiveSnapshot(liveState.page)) };
+    }
+    case 'press': {
+      if (!liveState) {
+        throw new Error('No browser session. Call BrowserStart first.');
+      }
+      const key = String(params.key || '');
+      if (!key) {
+        throw new Error('key is required');
+      }
+      await liveState.page.keyboard.press(key);
+      return { pressed: key, ...(await formatLiveSnapshot(liveState.page)) };
+    }
+    case 'scroll': {
+      if (!liveState) {
+        throw new Error('No browser session. Call BrowserStart first.');
+      }
+      const deltaY = Number(params.deltaY || 400);
+      await liveState.page.mouse.wheel(0, deltaY);
+      return { scrolled: deltaY, ...(await formatLiveSnapshot(liveState.page)) };
+    }
+    case 'wait': {
+      if (!liveState) {
+        throw new Error('No browser session. Call BrowserStart first.');
+      }
+      const timeoutMs = Number(params.timeoutMs || 120000);
+      const urlContains = params.urlContains
+        ? String(params.urlContains)
+        : null;
+      const titleContains = params.titleContains
+        ? String(params.titleContains)
+        : null;
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const snap = await formatLiveSnapshot(liveState.page);
+        const matched =
+          (!urlContains || snap.url.includes(urlContains)) &&
+          (!titleContains || snap.title.includes(titleContains));
+        if (matched) {
+          return { waited: true, ...snap };
+        }
+        await liveState.page.waitForTimeout(1500);
+      }
+      const snap = await formatLiveSnapshot(liveState.page);
+      throw new Error(
+        `wait timed out (url=${snap.url} title=${snap.title}). Sign in in the live viewer if this is a login wall.`,
+      );
+    }
+    case 'status': {
+      if (!liveState) {
+        return { live: false, mock: false };
+      }
+      const snap = await formatLiveSnapshot(liveState.page);
+      const local = liveState.backend === 'local';
+      return {
+        live: true,
+        mock: false,
+        backend: liveState.backend,
+        sessionId: local ? 'local-chrome' : liveState.session.id,
+        debugUrl: local ? null : liveState.session.debugUrl,
+        watchUrl: local ? null : watchUrl(liveState.session.debugUrl),
+        profileId: local ? null : liveState.session.profileId || null,
+        url: snap.url,
+        title: snap.title,
+      };
+    }
+    case 'stop': {
+      return releaseLive();
+    }
+    default:
+      throw new Error(`unsupported method: ${method}`);
+  }
+}
+
+async function dispatch(method, params) {
+  if (MOCK) {
+    return mockHandle(method, params || {});
+  }
+  return liveHandle(method, params || {});
+}
+
+async function onLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return;
+  }
+  let message;
+  try {
+    message = JSON.parse(trimmed);
+  } catch (error) {
+    writeResult(null, false, `invalid json: ${error.message}`);
+    return;
+  }
+  const id = Object.prototype.hasOwnProperty.call(message, 'id')
+    ? message.id
+    : null;
+  try {
+    const result = await dispatch(message.method, message.params);
+    writeResult(id, true, result);
+  } catch (error) {
+    writeResult(id, false, error.message || String(error));
+  }
+}
+
+function startRepl() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    crlfDelay: Infinity,
+  });
+  rl.on('line', (line) => {
+    onLine(line).catch((error) => {
+      process.stderr.write(`${error.stack || error.message}\n`);
+    });
+  });
+  const shutdown = async () => {
+    try {
+      if (MOCK) {
+        mockState = null;
+      } else {
+        await releaseLive();
+      }
+    } finally {
+      process.exit(0);
+    }
+  };
+  rl.on('close', () => {
+    shutdown().catch(() => process.exit(0));
+  });
+  process.on('SIGTERM', () => {
+    shutdown().catch(() => process.exit(0));
+  });
+  process.on('SIGINT', () => {
+    shutdown().catch(() => process.exit(0));
+  });
+}
+
+startRepl();

@@ -1,0 +1,14 @@
+{
+  "name": "claw-steel-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Steel.dev Playwright sidecar for Claw Code visible web-agent tools.",
+  "scripts": {
+    "driver": "node steel-driver.js",
+    "test": "node test-mock.js"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0",
+    "steel-sdk": "^0.15.0"
+  }
+}

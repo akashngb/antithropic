@@ -220,6 +220,10 @@ const TOP_LEVEL_FIELDS: &[FieldSpec] = &[
         name: "subagentModel",
         expected: FieldType::String,
     },
+    FieldSpec {
+        name: "steel",
+        expected: FieldType::Object,
+    },
 ];
 
 const HOOKS_FIELDS: &[FieldSpec] = &[
@@ -307,6 +311,17 @@ const SANDBOX_FIELDS: &[FieldSpec] = &[
     FieldSpec {
         name: "allowedMounts",
         expected: FieldType::StringArray,
+    },
+];
+
+const STEEL_FIELDS: &[FieldSpec] = &[
+    FieldSpec {
+        name: "autoOpenViewer",
+        expected: FieldType::Bool,
+    },
+    FieldSpec {
+        name: "timeoutMs",
+        expected: FieldType::Number,
     },
 ];
 
@@ -533,6 +548,15 @@ pub fn validate_config_file(
             sandbox,
             SANDBOX_FIELDS,
             "sandbox",
+            source,
+            &path_display,
+        ));
+    }
+    if let Some(steel) = object.get("steel").and_then(JsonValue::as_object) {
+        result.merge(validate_object_keys(
+            steel,
+            STEEL_FIELDS,
+            "steel",
             source,
             &path_display,
         ));

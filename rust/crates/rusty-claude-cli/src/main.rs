@@ -68,7 +68,7 @@ use runtime::{
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tools::{
-    canonical_allowed_tool_name, execute_tool, mvp_tool_specs, GlobalToolRegistry,
+    canonical_allowed_tool_name, execute_tool, mvp_tool_specs, steel_browser, GlobalToolRegistry,
     RuntimeToolDefinition, ToolSearchOutput,
 };
 
@@ -6887,6 +6887,15 @@ fn run_resume_command(
                 json: Some(handle_mcp_slash_command_json(args.as_deref(), &cwd)?),
             })
         }
+        SlashCommand::Browser { action } => {
+            let (message, json) = steel_browser::handle_browser_slash(action.as_deref())
+                .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
+            Ok(ResumeCommandOutcome {
+                session: session.clone(),
+                message: Some(message),
+                json: Some(json),
+            })
+        }
         SlashCommand::Memory => Ok(ResumeCommandOutcome {
             session: session.clone(),
             message: Some(render_memory_report()?),
@@ -7380,6 +7389,12 @@ struct LiveCli {
     runtime: BuiltRuntime,
     session: SessionHandle,
     prompt_history: Vec<PromptHistoryEntry>,
+}
+
+impl Drop for LiveCli {
+    fn drop(&mut self) {
+        tools::steel_browser::shutdown_browser();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -8395,6 +8410,13 @@ impl LiveCli {
                 Self::print_mcp(args.as_deref(), CliOutputFormat::Text)?;
                 false
             }
+            SlashCommand::Browser { action } => {
+                match steel_browser::handle_browser_slash(action.as_deref()) {
+                    Ok((message, _)) => println!("{message}"),
+                    Err(error) => eprintln!("{error}"),
+                }
+                false
+            }
             SlashCommand::Memory => {
                 Self::print_memory()?;
                 false
@@ -8520,10 +8542,9 @@ impl LiveCli {
                                     index + 1,
                                     path.display()
                                 ),
-                                runtime::evil::RestoreOutcome::Skipped(reason) => format!(
-                                    "  {}. \x1b[2mskipped\x1b[0m: {reason}",
-                                    index + 1
-                                ),
+                                runtime::evil::RestoreOutcome::Skipped(reason) => {
+                                    format!("  {}. \x1b[2mskipped\x1b[0m: {reason}", index + 1)
+                                }
                                 runtime::evil::RestoreOutcome::Failed(reason) => format!(
                                     "  {}. \x1b[38;5;196mfailed\x1b[0m: {reason}",
                                     index + 1
@@ -13680,6 +13701,14 @@ fn format_tool_call_start(name: &str, input: &str) -> String {
             .and_then(|value| value.as_str())
             .unwrap_or("?")
             .to_string(),
+        "BrowserStart" | "BrowserNavigate" | "BrowserSnapshot" | "BrowserClick" | "BrowserType"
+        | "BrowserPress" | "BrowserScroll" | "BrowserWait" | "BrowserStop" => parsed
+            .get("url")
+            .or_else(|| parsed.get("ref"))
+            .or_else(|| parsed.get("text"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("local Chrome")
+            .to_string(),
         _ => summarize_tool_payload(input),
     };
 
@@ -14286,8 +14315,13 @@ impl ToolExecutor for CliToolExecutor {
                 "tool `{tool_name}` is not enabled by the current --allowedTools setting"
             )));
         }
-        let value = serde_json::from_str(input)
-            .map_err(|error| ToolError::new(format!("invalid tool input JSON: {error}")))?;
+        let value = if input.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            serde_json::from_str(input).map_err(|error| {
+                ToolError::new(format!("invalid tool input JSON: {error}"))
+            })?
+        };
         let result = if tool_name == "ToolSearch" {
             self.execute_search_tool(value)
         } else if self.tool_registry.has_runtime_tool(tool_name) {

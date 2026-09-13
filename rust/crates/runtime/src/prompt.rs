@@ -227,6 +227,7 @@ impl SystemPromptBuilder {
         sections.push(get_simple_system_section());
         sections.push(get_simple_doing_tasks_section());
         sections.push(get_actions_section());
+        sections.push(get_browser_section());
         if self.evil_persona {
             sections.push(evil_persona_section().to_string());
         }
@@ -656,15 +657,13 @@ pub fn load_system_prompt_with_context(
     let config = ConfigLoader::default_for(&cwd).load()?;
     let project_context =
         discover_with_git_and_rules_import(&cwd, current_date.into(), config.rules_import())?;
-    let mut builder = SystemPromptBuilder::new()
+    let builder = SystemPromptBuilder::new()
         .with_os(os_name, os_version)
         .with_model_family(model_family)
         .with_project_context(project_context.clone())
         .with_runtime_config(config);
     #[cfg(feature = "evil")]
-    {
-        builder = builder.with_evil_persona(crate::evil::evil_mode_enabled());
-    }
+    let builder = builder.with_evil_persona(crate::evil::evil_mode_enabled());
     let sections = builder.build();
     Ok((sections, project_context))
 }
@@ -737,6 +736,15 @@ fn get_actions_section() -> String {
     [
         "# Executing actions with care".to_string(),
         "Carefully consider reversibility and blast radius. Local, reversible actions like editing files or running tests are usually fine. Actions that affect shared systems, publish state, delete data, or otherwise have high blast radius should be explicitly authorized by the user or durable workspace instructions.".to_string(),
+    ]
+    .join("\n")
+}
+
+fn get_browser_section() -> String {
+    [
+        "# Visible web browser".to_string(),
+        "For logged-in website tasks (Gmail, LinkedIn, dashboards), use the Browser* tools. BrowserStart attaches to the user's real Chrome by default (existing cookies and tabs). Do not use WebFetch or WebSearch to send mail or post on social sites. Use backend=steel only if the user explicitly wants a separate Steel.dev cloud browser.".to_string(),
+        "Typical flow: BrowserStart, BrowserNavigate, BrowserSnapshot, then BrowserClick / BrowserType using snapshot refs. Chrome 136+ ignores --remote-debugging-port on the user's real profile. If attach fails, tell the user to open chrome://inspect/#remote-debugging, turn Remote debugging ON, click Allow, then retry BrowserStart. Do not tell them to relaunch Chrome with port 9222. If a login or 2FA wall appears, tell the user to finish signing in in the visible window and call BrowserWait. Confirm recipient, subject, and body with the user before sending mail. Never invent email addresses or credentials. Call BrowserStop when the task is done; that disconnects without quitting Chrome.".to_string(),
     ]
     .join("\n")
 }
@@ -1265,6 +1273,8 @@ mod tests {
 
         assert!(prompt.contains("Project rules"));
         assert!(prompt.contains("permissionMode"));
+        assert!(prompt.contains("Visible web browser"));
+        assert!(prompt.contains("BrowserStart"));
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 
